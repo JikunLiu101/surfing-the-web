@@ -203,6 +203,9 @@ class SurfingTheWeb(star.Star):
                                else 0, int(self.cfg.get("start_hour", 10)), int(self.cfg.get("end_hour", 23)),
                                self.rng, now)
             await asyncio.to_thread(self.state.save, self.state_path)
+            times = [datetime.fromisoformat(t).strftime("%H:%M") for t in self.state.plan]
+            logger.info(f"[surfing] {self.state.day}: outings planned at {', '.join(times) or '(none)'}"
+                        + (f" ({self.state.done} already past)" if self.state.done else ""))
 
     def _resting(self, now: datetime) -> bool:
         """Right after an outing (of any kind) the next scheduled one waits."""
@@ -222,6 +225,7 @@ class SurfingTheWeb(star.Star):
                                                   int(self.cfg.get("owner_idle_minutes", 30))):
                     self.state.done += 1  # counted even if it fails: no retry storm
                     await asyncio.to_thread(self.state.save, self.state_path)
+                    logger.info(f"[surfing] scheduled outing {self.state.done}/{len(self.state.plan)} today")
                     await self.outing()
             except asyncio.CancelledError:
                 raise
