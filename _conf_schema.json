@@ -1,0 +1,126 @@
+{
+  "enabled": {
+    "description": "Go online on a schedule",
+    "type": "bool",
+    "default": true,
+    "hint": "Off: she only goes online when the owner sends /surf."
+  },
+  "outings_per_day": {
+    "description": "Outings per day",
+    "type": "int",
+    "default": 3,
+    "hint": "At random times between start_hour and end_hour."
+  },
+  "start_hour": {
+    "description": "Earliest hour",
+    "type": "int",
+    "default": 10
+  },
+  "end_hour": {
+    "description": "Latest hour",
+    "type": "int",
+    "default": 23,
+    "hint": "No outings after this hour (24 = midnight)."
+  },
+  "owner_idle_minutes": {
+    "description": "Wait while the owner is chatting (minutes)",
+    "type": "int",
+    "default": 30,
+    "hint": "An outing waits until the owner has been quiet this long."
+  },
+  "sources": {
+    "description": "Sites",
+    "type": "list",
+    "default": [
+      "bilibili_popular",
+      "bilibili_ranking",
+      "gcores",
+      "ithome",
+      "sspai",
+      "v2ex",
+      "github_trending",
+      "hackernews"
+    ],
+    "hint": "Built-in: bilibili_popular, bilibili_ranking, gcores, ithome, sspai, v2ex, github_trending, hackernews."
+  },
+  "sources_per_outing": {
+    "description": "Sites per outing",
+    "type": "int",
+    "default": 3
+  },
+  "items_per_source": {
+    "description": "Items shown per site",
+    "type": "int",
+    "default": 8
+  },
+  "max_picks": {
+    "description": "Most items opened per outing",
+    "type": "int",
+    "default": 3
+  },
+  "blocked_keywords": {
+    "description": "Blocked words",
+    "type": "list",
+    "default": [
+      "翻墙",
+      "梯子",
+      "科学上网",
+      "VPN",
+      "政治",
+      "政府",
+      "领导人",
+      "色情",
+      "赌博"
+    ],
+    "hint": "Items whose title or text contains one of these are never shown to her. Add what you do not want her to read or talk about."
+  },
+  "dailyhot_url": {
+    "description": "Self-hosted DailyHotApi address (optional)",
+    "type": "string",
+    "default": "",
+    "hint": "e.g. http://127.0.0.1:6688 — a DailyHotApi you run yourself (github.com/imsyy/DailyHotApi). Empty: not used."
+  },
+  "dailyhot_routes": {
+    "description": "DailyHotApi lists",
+    "type": "list",
+    "default": [],
+    "hint": "e.g. zhihu, weibo, ngabbs, miyoushe. Only used with dailyhot_url."
+  },
+  "inject_recent": {
+    "description": "Tell her what she saw lately",
+    "type": "bool",
+    "default": true,
+    "hint": "Adds a short note to the system prompt, so she can bring it up right away."
+  },
+  "recent_hours": {
+    "description": "How far back that note goes (hours)",
+    "type": "int",
+    "default": 24
+  },
+  "owner_ids": {
+    "description": "Owner user IDs",
+    "type": "list",
+    "default": [],
+    "hint": "Who may use /surf and /surf_log. Empty: taken from the memory-core plugin."
+  },
+  "owner_command_platforms": {
+    "description": "Platforms for the owner commands",
+    "type": "list",
+    "default": [
+      "webchat"
+    ],
+    "hint": "/surf and /surf_log only work for the owner, in a private chat, on these platforms. Everyone else gets no answer."
+  },
+  "persona_prompt": {
+    "description": "Persona (only without memory-core)",
+    "type": "text",
+    "default": "",
+    "hint": "With memory-core her identity documents are used. Empty: AstrBot's default persona."
+  },
+  "llm_provider_id": {
+    "description": "Chat model provider ID",
+    "type": "string",
+    "default": "",
+    "hint": "Empty: the one AstrBot is using."
+  }
+}
