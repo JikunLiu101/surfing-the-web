@@ -74,10 +74,9 @@
     "description": "Search sites (for what she wants to look up)",
     "type": "list",
     "default": [
-      "bilibili_search",
-      "web_search"
+      "bilibili_search"
     ],
-    "hint": "bilibili_search, web_search (DuckDuckGo titles and snippets). Only the topic words are sent. Empty: no searching, no surf_wish tool hint."
+    "hint": "bilibili_search; optional web_search (DuckDuckGo titles and snippets, often too short to be interesting). Only the topic words are sent. Empty: no searching."
   },
   "results_per_search": {
     "description": "Results shown per search site",

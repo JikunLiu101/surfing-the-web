@@ -17,11 +17,12 @@ from astrbot.api import logger, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 
-from .sources import BUILTIN, SEARCH_BUILTIN, build_searches, build_sources
+from .sources import BUILTIN, build_searches, build_sources
 from .wander import BufferSink, LogSink, MemoryCoreSink, State, due, go_out, recent_block
 
 PLUGIN_NAME = "astrbot_plugin_surfing_the_web"
 MEMORY_CORE = "astrbot_plugin_memory_core"
+DEFAULT_SEARCHES = ["bilibili_search"]  # web_search is optional: its snippets say little
 DEFAULT_BLOCKED = ["翻墙", "梯子", "科学上网", "VPN", "政治", "政府", "领导人", "色情", "赌博"]
 IDENTITY_DOCS = (("self", "identity"), ("self-image", "self_image"), ("voice", "voice_examples"))
 
@@ -153,7 +154,7 @@ class SurfingTheWeb(star.Star):
 
         sink = self._sink()
         buffered = BufferSink()  # memory-core writes block: they run in a thread afterwards
-        searches = build_searches(list(self.cfg.get("search_sources", list(SEARCH_BUILTIN))))
+        searches = build_searches(list(self.cfg.get("search_sources", DEFAULT_SEARCHES)))
         async with self._lock:
             from_wishes = not topic
             wish = (topic or self.state.take_wish()) if searches else ""
@@ -234,7 +235,7 @@ class SurfingTheWeb(star.Star):
                 self_ready = ready.strftime("%H:%M") if ready > now else ""
         block = recent_block(self.state.recent, now, hours=int(self.cfg.get("recent_hours", 24)),
                              with_thoughts=owner_private, wishes=self.state.wishes,
-                             can_wish=owner_private and bool(self.cfg.get("search_sources", list(SEARCH_BUILTIN))),
+                             can_wish=owner_private and bool(self.cfg.get("search_sources", DEFAULT_SEARCHES)),
                              self_left=self_left, self_ready=self_ready)
         req.system_prompt = f"{(req.system_prompt or '').rstrip()}\n\n{block}\n"
 
@@ -281,7 +282,7 @@ class SurfingTheWeb(star.Star):
     @filter.llm_tool(name="surf_wish")
     async def tool_wish(self, event: AstrMessageEvent, topic: str, reason: str = ""):
         """Note something you want to look up online; next time you go out on your own you search it first
-        (Bilibili and the web). Use public topic words only, e.g. a game, a show or a piece of news; never anyone's
+        (Bilibili search). Use public topic words only, e.g. a game, a show or a piece of news; never anyone's
         name, address, workplace or other personal details.
 
         Args:

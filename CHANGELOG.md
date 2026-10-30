@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 (2026-10-30)
+
+- Search defaults to Bilibili only; `web_search` (DuckDuckGo) stays available but is off by default: its snippets
+  (often wiki index pages) were too short to be interesting.
+
 ## 0.3.0 (2026-10-30)
 
 - The persona can go online by itself: the `surf_now(topic, reason)` tool (owner's private chat only) goes out

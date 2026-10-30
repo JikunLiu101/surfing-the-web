@@ -36,8 +36,8 @@ So that nobody can talk it into going online again and again:
 ### Things it wants to look up
 
 In the owner's private chat the persona has a `surf_wish(topic, reason)` tool ("I want to see what's new in
-Arknights"): the topic waits for the next outing, which searches it on `search_sources` (Bilibili search and
-DuckDuckGo). `/surf <topic>` goes out right away and looks it up. Only the owner shapes what it goes looking for: in
+Arknights"): the topic waits for the next outing, which searches it on `search_sources` (Bilibili search by default;
+DuckDuckGo can be added). `/surf <topic>` goes out right away and looks it up. Only the owner shapes what it goes looking for: in
 any other chat the tool refuses.
 
 Two model calls per outing, through AstrBot's own chat model, with no tools and no conversation history.
@@ -67,7 +67,7 @@ Two model calls per outing, through AstrBot's own chat model, with no tools and 
 | `github_trending` | GitHub | trending repositories |
 | `hackernews` | Hacker News | top stories |
 | `bilibili_search` | Bilibili | search (for what it wants to look up) |
-| `web_search` | DuckDuckGo | search: titles and snippets only, result pages are not opened |
+| `web_search` | DuckDuckGo | search, off by default: titles and snippets only, result pages are not opened |
 | `dailyhot_routes` | your own [DailyHotApi](https://github.com/imsyy/DailyHotApi) | any of its ~60 lists (Zhihu, Weibo, NGA, Miyoushe...), set `dailyhot_url` |
 
 ## With memory-core

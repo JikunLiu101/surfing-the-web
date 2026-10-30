@@ -27,7 +27,7 @@
 
 ### 想找的东西
 
-在主人私聊里，角色有一个 `surf_wish(topic, reason)` 工具（"我想看看明日方舟最近有什么"）：话题会等到下次出门，在 `search_sources`（B 站搜索和 DuckDuckGo）上先搜。`/surf 话题` 会立刻出门去搜。只有主人能决定它去找什么：在其他聊天里这个工具会拒绝。
+在主人私聊里，角色有一个 `surf_wish(topic, reason)` 工具（"我想看看明日方舟最近有什么"）：话题会等到下次出门，在 `search_sources`（默认 B 站搜索，可以加上 DuckDuckGo）上先搜。`/surf 话题` 会立刻出门去搜。只有主人能决定它去找什么：在其他聊天里这个工具会拒绝。
 
 每次出门调用两次模型（AstrBot 自己的聊天模型），不带工具，也不带聊天记录。
 
@@ -56,7 +56,7 @@
 | `github_trending` | GitHub | 趋势仓库 |
 | `hackernews` | Hacker News | 热门 |
 | `bilibili_search` | B 站 | 搜索（用于它想找的东西） |
-| `web_search` | DuckDuckGo | 搜索：只看标题和摘要，不打开结果页 |
+| `web_search` | DuckDuckGo | 搜索，默认关闭：只看标题和摘要，不打开结果页 |
 | `dailyhot_routes` | 你自己部署的 [DailyHotApi](https://github.com/imsyy/DailyHotApi) | 它的约 60 个榜单（知乎、微博、NGA、米游社……），需填 `dailyhot_url` |
 
 ## 配合 memory-core
