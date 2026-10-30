@@ -136,6 +136,23 @@ class SurfingTheWeb(star.Star):
     def _self_rules(self) -> tuple[int, int]:
         return int(self.cfg.get("self_outings_per_day", 3)), int(self.cfg.get("self_cooldown_minutes", 60))
 
+    def being_abilities(self, owner: str) -> list[tuple[str, str, str]]:
+        """What this plugin lets her do, as (key, name, how it works), for the plugin that tells her what she
+        can do (memory-core). Follows the settings, so it stays true."""
+        out = []
+        if self.cfg.get("enabled", True) and int(self.cfg.get("outings_per_day", 3)) > 0:
+            out.append(("surfing-the-web:outings", "自己上网逛逛",
+                        f"每天{int(self.cfg.get('start_hour', 10))}点到{int(self.cfg.get('end_hour', 23))}点之间会自己"
+                        f"出门{int(self.cfg.get('outings_per_day', 3))}次左右，刷几个常去的站点，看到的会记下来"))
+        if self.cfg.get("search_sources", DEFAULT_SEARCHES):
+            out.append(("surfing-the-web:wish", "记下想上网查的",
+                        f"和{owner}私聊时用 surf_wish 记下想查的话题，下次出门先去B站搜"))
+        per_day, cooldown = self._self_rules()
+        if per_day > 0:
+            out.append(("surfing-the-web:now", "想去就马上上网",
+                        f"和{owner}私聊时用 surf_now 现在就去逛一会儿，一天至多{per_day}次，两次之间要歇一会儿"))
+        return out
+
     async def outing(self, topic: str = ""):
         """Go out once now, looking up `topic` (or her oldest wish). Returns the Outing, or None when there is
         nothing to do it with."""

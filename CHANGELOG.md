@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `being_abilities(owner)`: tells memory-core what going online lets her do (follows the settings), so she knows
+  without being told.
 - The rest after an outing drifts (`timing_jitter`, default give or take 20%) instead of always being
   `self_cooldown_minutes`.
 
