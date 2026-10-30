@@ -16,7 +16,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
-from .sources import Item, SafeFetcher, Source, allowed_hosts, clip
+from .sources import Item, SafeFetcher, SearchSource, Source, allowed_hosts, clip
 
 log = logging.getLogger("surfing_the_web")
 
@@ -29,7 +29,7 @@ UNTRUSTED = (
 
 PICK_SYSTEM = """{persona}
 
-现在没人跟你聊天，你自己在上网闲逛。下面是你刚刷到的列表。
+现在没人跟你聊天，你自己在上网闲逛。下面是你刚刷到的列表。{wish_note}
 """ + UNTRUSTED + """
 
 按你自己的兴趣挑想点开看的，最多 {max_picks} 条；都没兴趣可以一条都不挑。不用照顾谁的喜好，挑你自己真想看的。
@@ -52,7 +52,8 @@ def menu(items: list[Item]) -> str:
     lines = []
     for i, it in enumerate(items, 1):
         tail = f" —— {it.summary}" if it.summary else ""
-        lines.append(f"[{i}] {it.site}｜{it.title}{tail}")
+        mark = f"【搜「{it.meta['wish']}」】" if it.meta.get("wish") else ""
+        lines.append(f"[{i}] {mark}{it.site}｜{it.title}{tail}")
     return "<web>\n" + "\n".join(lines) + "\n</web>"
 
 
@@ -202,6 +203,8 @@ class Outing:
     shown: int = 0
     seen: list[Seen] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    wish: str = ""  # what she went to look up, if anything
+    found: int = 0  # search results shown for it
 
 
 def url_key(url: str) -> str:
@@ -220,13 +223,30 @@ def is_blocked(item: Item, words: tuple[str, ...]) -> bool:
 
 async def go_out(sources: list[Source], complete: Complete, sink: Sink, *, persona: str, now: datetime,
                  already_seen: set[str], per_source: int = 8, max_picks: int = 3, blocked: tuple[str, ...] = (),
+                 wish: str = "", searches: list[SearchSource] = (), per_search: int = 6,
                  rng: random.Random | None = None, transport=None) -> Outing:
-    """Fetch the lists, let her pick, open the picks, let her think, record. Failing sources are skipped."""
+    """Fetch the lists (and look up `wish`, if any), let her pick, open the picks, let her think, record.
+    Failing sources are skipped."""
     rng = rng or random.Random()
-    outing = Outing(at=now.isoformat(), sources=[s.key for s in sources])
-    async with SafeFetcher(allowed_hosts(sources), transport=transport) as f:
+    searches = list(searches) if wish else []
+    outing = Outing(at=now.isoformat(), sources=[s.key for s in [*searches, *sources]], wish=wish)
+    async with SafeFetcher(allowed_hosts([*sources, *searches]), transport=transport) as f:
+        found: list[Item] = []
+        if searches:
+            hits = await asyncio.gather(*(s.search(f, wish, per_search * 2) for s in searches),
+                                        return_exceptions=True)
+            for s, res in zip(searches, hits):
+                if isinstance(res, BaseException):
+                    outing.errors.append(f"{s.key}: {type(res).__name__}: {res}")
+                    log.warning("search %s failed: %s", s.key, res)
+                    continue
+                fresh = [it for it in res if item_key(it) not in already_seen and not is_blocked(it, blocked)]
+                for it in fresh[:per_search]:
+                    it.meta["wish"] = wish
+                    found.append(it)
+        outing.found = len(found)
         results = await asyncio.gather(*(s.fetch(f, per_source * 2) for s in sources), return_exceptions=True)
-        by_key = {s.key: s for s in sources}
+        by_key = {s.key: s for s in [*sources, *searches]}
         items: list[Item] = []
         for s, res in zip(sources, results):
             if isinstance(res, BaseException):
@@ -236,12 +256,19 @@ async def go_out(sources: list[Source], complete: Complete, sink: Sink, *, perso
             fresh = [it for it in res if item_key(it) not in already_seen and not is_blocked(it, blocked)]
             items += fresh[:per_source]
         rng.shuffle(items)
+        items = found + items  # what she went to look for comes first
         outing.shown = len(items)
         if not items:
             return outing
 
-        picks = parse_picks(await complete(PICK_SYSTEM.format(persona=persona, max_picks=max_picks), menu(items)),
-                            len(items), max_picks)
+        if found:
+            note = f"\n你之前想找「{wish}」，这次专门去搜了，搜到的标着【搜】；没有想要的也可以不挑。"
+        elif wish:
+            note = f"\n你之前想找「{wish}」，可惜这次没搜到什么。"
+        else:
+            note = ""
+        system = PICK_SYSTEM.format(persona=persona, max_picks=max_picks, wish_note=note)
+        picks = parse_picks(await complete(system, menu(items)), len(items), max_picks)
         if not picks:
             return outing
         chosen = []
@@ -302,6 +329,7 @@ class State:
     seen_keys: list[str] = field(default_factory=list)
     recent: list[dict] = field(default_factory=list)  # Seen rows, newest last
     outings: list[dict] = field(default_factory=list)  # short reports, newest last
+    wishes: list[dict] = field(default_factory=list)  # {"topic", "reason", "at"}: what she wants to look up
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -327,12 +355,48 @@ class State:
     def remember(self, outing: Outing, keep_keys: int = 1000, keep_recent: int = 30) -> None:
         self.seen_keys = (self.seen_keys + [url_key(s.url) for s in outing.seen])[-keep_keys:]
         self.recent = (self.recent + [asdict(s) for s in outing.seen])[-keep_recent:]
-        self.outings = (self.outings + [{"at": outing.at, "shown": outing.shown, "seen": len(outing.seen),
+        self.outings = (self.outings + [{"at": outing.at, "sources": outing.sources, "wish": outing.wish,
+                                         "found": outing.found, "shown": outing.shown, "seen": len(outing.seen),
                                          "errors": outing.errors[:5]}])[-20:]
+
+    def add_wish(self, topic: str, reason: str, now: datetime, blocked: tuple[str, ...] = (),
+                 max_pending: int = 10) -> tuple[bool, str]:
+        """Queue something to look up next time. Returns (added, the topic or why not)."""
+        topic = normalize_topic(topic)
+        if not topic:
+            return False, "要找什么得写清楚，几个词就行"
+        if any(w and w.lower() in topic.lower() for w in blocked):
+            return False, "这个不能去搜"
+        if looks_personal(topic):
+            return False, "搜索词里不能有号码、邮箱、网址之类的东西"
+        if any(w["topic"].lower() == topic.lower() for w in self.wishes):
+            return False, f"「{topic}」已经在想找的里了"
+        if len(self.wishes) >= max_pending:
+            return False, "想找的已经攒了太多，先等下次出门"
+        self.wishes.append({"topic": topic, "reason": clip(reason or "", 100), "at": now.isoformat()})
+        return True, topic
+
+    def take_wish(self) -> str:
+        return self.wishes.pop(0)["topic"] if self.wishes else ""
+
+
+_DIGITS = re.compile(r"\d{5,}")
+_QUOTES = "\"'“”「」‘’"
+
+
+def normalize_topic(text: str, limit: int = 30) -> str:
+    """A short search topic: whitespace collapsed, at most `limit` characters (or empty)."""
+    text = re.sub(r"\s+", " ", (text or "").strip().strip(_QUOTES).strip())
+    return text if 0 < len(text) <= limit else ""
+
+
+def looks_personal(topic: str) -> bool:
+    """Long numbers (phone, QQ, ID), e-mail or web addresses never go into a search."""
+    return bool(_DIGITS.search(topic)) or "@" in topic or "://" in topic or "www." in topic.lower()
 
 
 def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int = 5, *,
-                 with_thoughts: bool = False) -> str:
+                 with_thoughts: bool = False, wishes: list[dict] = (), can_wish: bool = False) -> str:
     """What she saw online lately, for the system prompt (so she can bring it up before it is consolidated).
     Her thoughts are her inner life: only included when `with_thoughts` (the owner's private chat)."""
     since = now - timedelta(hours=hours)
@@ -352,5 +416,10 @@ def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int 
         for at, r in rows:
             thought = f"，你当时想：{r['thought']}" if with_thoughts and r.get("thought") else ""
             lines.append(f"  - {at.astimezone().strftime('%m-%d %H:%M')} 在{r['site']}看到《{r['title']}》{thought}")
+    if can_wish:
+        lines.append("- 想上网查点什么（自己好奇的、聊天里想知道的），用 surf_wish 记下来，下次出门会先去搜；"
+                     "只写公开的话题词（游戏名、作品名、新闻之类），不要写任何人的名字、住址、工作等个人信息")
+        if wishes:
+            lines.append("- 你记下想找的：" + "、".join(f"「{w['topic']}」" for w in wishes))
     lines.append("</surfing_the_web>")
     return "\n".join(lines)

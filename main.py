@@ -17,7 +17,7 @@ from astrbot.api import logger, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 
-from .sources import BUILTIN, build_sources
+from .sources import BUILTIN, SEARCH_BUILTIN, build_searches, build_sources
 from .wander import BufferSink, LogSink, MemoryCoreSink, State, due, go_out, recent_block
 
 PLUGIN_NAME = "astrbot_plugin_surfing_the_web"
@@ -126,8 +126,12 @@ class SurfingTheWeb(star.Star):
         provider = self.context.get_using_provider()
         return provider.meta().id if provider else None
 
-    async def outing(self):
-        """Go out once now. Returns the Outing, or None when there is nothing to do it with."""
+    def _blocked(self) -> tuple[str, ...]:
+        return tuple(str(w).strip() for w in self.cfg.get("blocked_keywords", DEFAULT_BLOCKED) if str(w).strip())
+
+    async def outing(self, topic: str = ""):
+        """Go out once now, looking up `topic` (or her oldest wish). Returns the Outing, or None when there is
+        nothing to do it with."""
         provider_id = self._provider_id()
         sources = self._sources()
         if not provider_id or not sources:
@@ -143,17 +147,27 @@ class SurfingTheWeb(star.Star):
 
         sink = self._sink()
         buffered = BufferSink()  # memory-core writes block: they run in a thread afterwards
-        blocked = tuple(str(w).strip() for w in self.cfg.get("blocked_keywords", DEFAULT_BLOCKED) if str(w).strip())
+        searches = build_searches(list(self.cfg.get("search_sources", list(SEARCH_BUILTIN))))
         async with self._lock:
+            from_wishes = not topic
+            wish = (topic or self.state.take_wish()) if searches else ""
             outing = await go_out(picked, complete, buffered, persona=await self._persona(), now=_now(),
                                   already_seen=set(self.state.seen_keys),
                                   per_source=int(self.cfg.get("items_per_source", 8)),
-                                  max_picks=int(self.cfg.get("max_picks", 3)), blocked=blocked, rng=self.rng)
+                                  max_picks=int(self.cfg.get("max_picks", 3)), blocked=self._blocked(),
+                                  wish=wish, searches=searches, per_search=int(self.cfg.get("results_per_search", 6)),
+                                  rng=self.rng)
+            search_keys = {s.key for s in searches}
+            failed = [e for e in outing.errors if e.split(":", 1)[0] in search_keys]
+            if wish and from_wishes and not outing.found and len(failed) == len(searches):
+                self.state.wishes.append({"topic": wish, "reason": "上次没搜成", "at": _now().isoformat()})
             for row in buffered.rows:
                 await asyncio.to_thread(sink.record, *row)
             self.state.remember(outing)
             await asyncio.to_thread(self.state.save, self.state_path)
-        logger.info(f"[surfing] outing: {outing.shown} shown, {len(outing.seen)} opened"
+        logger.info(f"[surfing] outing ({', '.join(outing.sources)}"
+                    + (f"; looked up {outing.wish!r}: {outing.found} found" if outing.wish else "")
+                    + f"): {outing.shown} shown, {len(outing.seen)} opened"
                     + (f", errors: {outing.errors}" if outing.errors else ""))
         return outing
 
@@ -193,31 +207,63 @@ class SurfingTheWeb(star.Star):
             return
         owner_private = not event.get_group_id() and str(event.get_sender_id()) in self._owner_ids()
         block = recent_block(self.state.recent, _now(), hours=int(self.cfg.get("recent_hours", 24)),
-                             with_thoughts=owner_private)
+                             with_thoughts=owner_private, wishes=self.state.wishes,
+                             can_wish=owner_private and bool(self.cfg.get("search_sources", list(SEARCH_BUILTIN))))
         req.system_prompt = f"{(req.system_prompt or '').rstrip()}\n\n{block}\n"
+
+    @filter.llm_tool(name="surf_wish")
+    async def tool_wish(self, event: AstrMessageEvent, topic: str, reason: str = ""):
+        """Note something you want to look up online; next time you go out on your own you search it first
+        (Bilibili and the web). Use public topic words only, e.g. a game, a show or a piece of news; never anyone's
+        name, address, workplace or other personal details.
+
+        Args:
+            topic(string): a few words to search, e.g. 明日方舟 新干员
+            reason(string): why you want to know
+        """
+        owner_private = not event.get_group_id() and str(event.get_sender_id()) in self._owner_ids()
+        if not owner_private:
+            # only the owner shapes what she goes looking for
+            logger.info(f"[surfing] surf_wish refused outside the owner's private chat: {topic!r}")
+            return "想上网找什么，只能私下和最亲近的人商量，现在不能记"
+        ok, msg = self.state.add_wish(topic, reason, _now(), self._blocked())
+        if not ok:
+            return msg
+        await asyncio.to_thread(self.state.save, self.state_path)
+        return f"记下了：下次出门先去搜「{msg}」（现在想找的有 {len(self.state.wishes)} 个）"
 
     # ---------------------------------------------------------------- owner commands
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("surf")
     async def cmd_surf(self, event: AstrMessageEvent):
-        """让她现在出门上网逛一次"""
+        """让她现在出门上网逛一次：/surf，或 /surf 话题（顺便去搜这个）"""
         if self._console_denied(event):
             return
+        parts = (event.get_message_str() or "").strip().split(maxsplit=1)
+        topic = parts[1].strip() if len(parts) > 1 else ""
+        if topic:
+            ok, msg = State().add_wish(topic, "", _now(), self._blocked())  # same checks as her own wishes
+            if not ok:
+                yield event.plain_result(msg)
+                return
+            topic = msg
         try:
-            outing = await self.outing()
+            outing = await self.outing(topic)
         except Exception as exc:  # noqa: BLE001
             yield event.plain_result(f"出门失败：{exc}")
             return
         if outing is None:
             yield event.plain_result("没有可用的聊天模型或站点")
             return
+        head = f"去了 {'、'.join(outing.sources)}" + (f"，搜「{outing.wish}」找到 {outing.found} 条" if outing.wish else "")
+        tail = f"\n（出错：{'; '.join(outing.errors)}）" if outing.errors else ""
         if not outing.seen:
-            tail = f"（出错：{'; '.join(outing.errors)}）" if outing.errors else ""
-            yield event.plain_result(f"刷了 {outing.shown} 条，没有想点开的{tail}")
+            yield event.plain_result(f"{head}，刷了 {outing.shown} 条，没有想点开的{tail}")
             return
         lines = [f"· {s.site}｜{s.title}\n  {s.thought or '（没想什么）'}" for s in outing.seen]
-        yield event.plain_result(f"刷了 {outing.shown} 条，点开了 {len(outing.seen)} 条：\n" + "\n".join(lines))
+        yield event.plain_result(f"{head}，刷了 {outing.shown} 条，点开了 {len(outing.seen)} 条：\n"
+                                 + "\n".join(lines) + tail)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("surf_log")
@@ -229,4 +275,9 @@ class SurfingTheWeb(star.Star):
                          for i, t in enumerate(self.state.plan)) or "（没有）"
         recent = [f"· {datetime.fromisoformat(r['at']).strftime('%m-%d %H:%M')} {r['site']}｜{r['title']}"
                   + (f"\n  {r['thought']}" if r.get("thought") else "") for r in self.state.recent[-8:]]
-        yield event.plain_result(f"今天的计划：{plan}\n\n最近看过：\n" + ("\n".join(recent) or "（还没有）"))
+        wishes = "、".join(f"「{w['topic']}」" for w in self.state.wishes) or "（没有）"
+        last = self.state.outings[-1] if self.state.outings else None
+        last_line = (f"\n上次出门：{', '.join(last.get('sources', []))}"
+                     + (f"，搜「{last['wish']}」{last.get('found', 0)} 条" if last.get("wish") else "")) if last else ""
+        yield event.plain_result(f"今天的计划：{plan}\n想找的：{wishes}{last_line}\n\n最近看过：\n"
+                                 + ("\n".join(recent) or "（还没有）"))

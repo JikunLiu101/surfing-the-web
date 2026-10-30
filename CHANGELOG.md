@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 (2026-10-30)
+
+- Things to look up: in the owner's private chat the persona can note a topic with the `surf_wish` tool; the next
+  outing searches it first (Bilibili search, DuckDuckGo titles and snippets) and marks the results. `/surf <topic>`
+  goes out now and looks it up. Topics: at most 30 characters, no long numbers, e-mail or web addresses, no blocked
+  words; only the topic words are sent. Outside the owner's private chat the tool refuses.
+- Outing reports and `/surf_log` show which sites were visited and what was looked up.
+
 ## 0.1.0 (2026-10-30)
 
 First release.

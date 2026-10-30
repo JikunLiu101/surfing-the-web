@@ -2,5 +2,5 @@ name: astrbot_plugin_surfing_the_web
 display_name: surfing-the-web
 desc: Lets your persona go online on its own a few times a day (Bilibili, tech news, forums...), pick what it likes and think about it. Read-only, allow-listed, no login; works with memory-core as long-term memory.
 author: JikunLiu101
-version: 0.1.0
+version: 0.2.0
 repo: https://github.com/JikunLiu101/surfing-the-web

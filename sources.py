@@ -12,6 +12,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from html import unescape
 from urllib.parse import urljoin, urlsplit
 
@@ -63,12 +64,14 @@ class SafeFetcher:
     async def __aexit__(self, *exc) -> None:
         await self._client.aclose()
 
-    async def get_text(self, url: str) -> str:
+    async def get_text(self, url: str, *, params: dict | None = None, headers: dict | None = None) -> str:
+        if params:
+            url = str(httpx.URL(url, params=params))
         for _ in range(MAX_REDIRECTS + 1):
             if not host_allowed(url, self.hosts):
                 raise BlockedURL(url)
             self._client.cookies.clear()  # nothing a site sets is ever sent back
-            async with self._client.stream("GET", url) as resp:
+            async with self._client.stream("GET", url, headers=headers) as resp:
                 if resp.is_redirect:
                     url = urljoin(url, resp.headers.get("location", ""))
                     continue
@@ -82,8 +85,8 @@ class SafeFetcher:
                 return b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
         raise ValueError(f"too many redirects: {url}")
 
-    async def get_json(self, url: str):
-        return json.loads(await self.get_text(url))
+    async def get_json(self, url: str, **kw):
+        return json.loads(await self.get_text(url, **kw))
 
 
 # ------------------------------------------------------------------ text helpers
@@ -91,8 +94,9 @@ class SafeFetcher:
 _WS = re.compile(r"\s+")
 
 
-def html_to_text(html: str, limit: int = 2000) -> str:
-    """Visible text of an HTML fragment (scripts and styles dropped), whitespace collapsed."""
+def html_to_text(html: str, limit: int = 2000, sep: str = " ") -> str:
+    """Visible text of an HTML fragment (scripts and styles dropped), whitespace collapsed. `sep=""` for
+    inline markup such as highlighted search words."""
     if not html:
         return ""
     try:
@@ -101,7 +105,7 @@ def html_to_text(html: str, limit: int = 2000) -> str:
         soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "iframe", "noscript"]):
             tag.decompose()
-        text = soup.get_text(" ")
+        text = soup.get_text(sep)
     except Exception:  # noqa: BLE001 - fall back to a crude strip
         text = re.sub(r"<[^>]+>", " ", html)
     return clip(_WS.sub(" ", unescape(text)).strip(), limit)
@@ -322,3 +326,88 @@ def build_sources(enabled: list[str], dailyhot_url: str = "", dailyhot_routes: l
 
 def allowed_hosts(sources: list[Source]) -> set[str]:
     return {h for s in sources for h in s.hosts if h}
+
+
+# ------------------------------------------------------------------ search (for what she wants to look up)
+
+
+class SearchSource(Source):
+    """Looks a topic up. Only the topic words are sent; results are shown like any list."""
+
+    async def search(self, f: SafeFetcher, query: str, limit: int) -> list[Item]:
+        raise NotImplementedError
+
+    async def fetch(self, f, limit):  # a search source has no list of its own
+        return []
+
+
+class BilibiliSearch(SearchSource):
+    key, site, hosts = "bilibili_search", "B站", ("api.bilibili.com",)
+
+    async def search(self, f, query, limit):
+        data = await f.get_json("https://api.bilibili.com/x/web-interface/wbi/search/type",
+                                params={"search_type": "video", "keyword": query},
+                                headers={"Referer": "https://www.bilibili.com/"})
+        if data.get("code") != 0:
+            raise ValueError(f"bilibili search answered code {data.get('code')}")
+        return parse_bilibili_search(data)[:limit]
+
+
+def parse_bilibili_search(data: dict) -> list[Item]:
+    items = []
+    for v in (data.get("data") or {}).get("result") or []:
+        bvid, title = v.get("bvid") or "", html_to_text(v.get("title") or "", 100, sep="")
+        if not bvid or not title or v.get("type", "video") != "video":
+            continue
+        when = ""
+        try:
+            when = datetime.fromtimestamp(int(v.get("pubdate")), timezone.utc).astimezone().strftime("%Y-%m-%d")
+        except (TypeError, ValueError, OSError):
+            pass
+        bits = [f"UP主 {v['author']}" if v.get("author") else "", f"播放 {_count(v.get('play'))}" if v.get("play") else "",
+                f"发布 {when}" if when else ""]
+        items.append(Item("bilibili_search", "B站", title, f"https://www.bilibili.com/video/{bvid}",
+                          summary=" · ".join(b for b in bits if b),
+                          body=clip(_WS.sub(" ", v.get("description") or ""), 600),
+                          meta={"bvid": bvid, "author": v.get("author", "")}))
+    return items
+
+
+class WebSearch(SearchSource):
+    """DuckDuckGo's HTML results: titles and snippets only (result pages are not opened)."""
+
+    key, site, hosts = "web_search", "网页搜索", ("html.duckduckgo.com",)
+
+    async def search(self, f, query, limit):
+        html = await f.get_text("https://html.duckduckgo.com/html/", params={"q": query, "kl": "cn-zh"})
+        return parse_ddg(html)[:limit]
+
+
+def parse_ddg(html: str) -> list[Item]:
+    from urllib.parse import parse_qs  # noqa: PLC0415
+
+    from bs4 import BeautifulSoup  # noqa: PLC0415
+
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    for res in soup.select("div.result"):
+        a = res.select_one("a.result__a")
+        if not a or not a.get("href") or "result--ad" in (res.get("class") or []):
+            continue
+        href = a["href"]
+        if "uddg=" in href:  # //duckduckgo.com/l/?uddg=<real url>
+            href = parse_qs(urlsplit(href if "://" in href else "https:" + href).query).get("uddg", [href])[0]
+        if not href.startswith(("http://", "https://")):
+            continue
+        snippet = res.select_one(".result__snippet")
+        items.append(Item("web_search", "网页搜索", html_to_text(str(a), 100, sep=""), href,
+                          summary=urlsplit(href).hostname or "",
+                          body=html_to_text(str(snippet), 400) if snippet else ""))
+    return items
+
+
+SEARCH_BUILTIN: dict[str, SearchSource] = {s.key: s for s in (BilibiliSearch(), WebSearch())}
+
+
+def build_searches(enabled: list[str]) -> list[SearchSource]:
+    return [SEARCH_BUILTIN[k] for k in enabled if k in SEARCH_BUILTIN]

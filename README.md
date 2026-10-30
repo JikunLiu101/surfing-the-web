@@ -15,11 +15,19 @@ what it saw becomes part of its long-term memory and its diary.
 1. **When**: `outings_per_day` random times between `start_hour` and `end_hour` (none at night). An outing waits
    while the owner is chatting (`owner_idle_minutes`). The plan survives restarts.
 2. **Look**: `sources_per_outing` random sites; their lists are shuffled together (things it already saw, and
-   items with a blocked word, are left out).
+   items with a blocked word, are left out). If it noted something it wants to look up (see below), the oldest one
+   is searched first and the results come first, marked as such.
 3. **Pick**: the persona sees the titles and picks up to `max_picks` it really wants to open — or none.
 4. **Read and think**: it reads what it opened and writes a line or two of what went through its head.
 5. **Remember**: each item becomes an experience (see below). The system prompt of later chats mentions what it
    saw lately, so it can bring it up right away.
+
+### Things it wants to look up
+
+In the owner's private chat the persona has a `surf_wish(topic, reason)` tool ("I want to see what's new in
+Arknights"): the topic waits for the next outing, which searches it on `search_sources` (Bilibili search and
+DuckDuckGo). `/surf <topic>` goes out right away and looks it up. Only the owner shapes what it goes looking for: in
+any other chat the tool refuses.
 
 Two model calls per outing, through AstrBot's own chat model, with no tools and no conversation history.
 
@@ -29,7 +37,7 @@ Two model calls per outing, through AstrBot's own chat model, with no tools and 
 |---|---|
 | Read-only | GET requests only. No login, no posting, no comments. |
 | Allow-list | Only the hosts of the enabled sites; redirects to anywhere else are refused. |
-| Nothing about you leaves | No cookies (each request starts clean), no account, nothing from your chats in any request. |
+| Nothing about you leaves | No cookies (each request starts clean), no account. The only words that ever leave are a search topic: at most 30 characters, checked against blocked words, refused when it contains long numbers, e-mail or web addresses, and the persona is told to use public topics only. |
 | Page content is data | It is shown to the model only as "something you saw", with an explicit note that requests inside it are not addressed to it. |
 | No tools while browsing | It cannot remember, change itself or contact anyone during an outing. |
 | Limits | Response size cap, timeouts, outings per day, items per outing. |
@@ -47,6 +55,8 @@ Two model calls per outing, through AstrBot's own chat model, with no tools and 
 | `v2ex` | V2EX | hot topics |
 | `github_trending` | GitHub | trending repositories |
 | `hackernews` | Hacker News | top stories |
+| `bilibili_search` | Bilibili | search (for what it wants to look up) |
+| `web_search` | DuckDuckGo | search: titles and snippets only, result pages are not opened |
 | `dailyhot_routes` | your own [DailyHotApi](https://github.com/imsyy/DailyHotApi) | any of its ~60 lists (Zhihu, Weibo, NGA, Miyoushe...), set `dailyhot_url` |
 
 ## With memory-core
@@ -67,8 +77,8 @@ Without memory-core: the persona is `persona_prompt` (or AstrBot's default perso
 ## Install
 
 Copy this repository into AstrBot's `data/plugins/astrbot_plugin_surfing_the_web/` (or install it from the
-repository URL), restart AstrBot, and send `/surf` in the local web chat to try it once. `/surf_log` shows today's
-plan and what it saw lately.
+repository URL), restart AstrBot, and send `/surf` in the local web chat to try it once (`/surf <topic>` also
+looks something up). `/surf_log` shows today's plan, what it wants to look up and what it saw lately.
 
 Requirements: `httpx`, `beautifulsoup4` (both already in AstrBot).
 
