@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 (2026-10-30)
+
+- The persona can go online by itself: the `surf_now(topic, reason)` tool (owner's private chat only) goes out
+  right away, optionally looks a topic up, and returns what it saw and thought. So that it cannot be talked into
+  going again and again: `self_outings_per_day` (default 3) and a rest of `self_cooldown_minutes` (default 60) after
+  any outing; the prompt tells it how many are left. Scheduled outings also wait out the rest.
+
 ## 0.2.0 (2026-10-30)
 
 - Things to look up: in the owner's private chat the persona can note a topic with the `surf_wish` tool; the next

@@ -28,6 +28,18 @@
     "default": 30,
     "hint": "An outing waits until the owner has been quiet this long."
   },
+  "self_outings_per_day": {
+    "description": "Outings she may start herself per day",
+    "type": "int",
+    "default": 3,
+    "hint": "With the surf_now tool, only in the owner's private chat. Scheduled outings and /surf do not count. 0: she cannot go online by herself."
+  },
+  "self_cooldown_minutes": {
+    "description": "Rest after an outing (minutes)",
+    "type": "int",
+    "default": 60,
+    "hint": "She cannot go out herself again sooner, and a scheduled outing waits as well."
+  },
   "sources": {
     "description": "Sites",
     "type": "list",

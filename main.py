@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from astrbot.api import logger, star
@@ -129,6 +129,12 @@ class SurfingTheWeb(star.Star):
     def _blocked(self) -> tuple[str, ...]:
         return tuple(str(w).strip() for w in self.cfg.get("blocked_keywords", DEFAULT_BLOCKED) if str(w).strip())
 
+    def _owner_private(self, event: AstrMessageEvent) -> bool:
+        return not event.get_group_id() and str(event.get_sender_id()) in self._owner_ids()
+
+    def _self_rules(self) -> tuple[int, int]:
+        return int(self.cfg.get("self_outings_per_day", 3)), int(self.cfg.get("self_cooldown_minutes", 60))
+
     async def outing(self, topic: str = ""):
         """Go out once now, looking up `topic` (or her oldest wish). Returns the Outing, or None when there is
         nothing to do it with."""
@@ -164,6 +170,7 @@ class SurfingTheWeb(star.Star):
             for row in buffered.rows:
                 await asyncio.to_thread(sink.record, *row)
             self.state.remember(outing)
+            self.state.last_outing_at = _now().isoformat()
             await asyncio.to_thread(self.state.save, self.state_path)
         logger.info(f"[surfing] outing ({', '.join(outing.sources)}"
                     + (f"; looked up {outing.wish!r}: {outing.found} found" if outing.wish else "")
@@ -171,18 +178,29 @@ class SurfingTheWeb(star.Star):
                     + (f", errors: {outing.errors}" if outing.errors else ""))
         return outing
 
+    async def _roll_day(self, now: datetime) -> None:
+        """A new day: plan today's outings, and her own outings start again from zero."""
+        if self.state.day != now.date().isoformat():
+            self.state.new_day(now.date(), int(self.cfg.get("outings_per_day", 3)) if self.cfg.get("enabled", True)
+                               else 0, int(self.cfg.get("start_hour", 10)), int(self.cfg.get("end_hour", 23)),
+                               self.rng, now)
+            await asyncio.to_thread(self.state.save, self.state_path)
+
+    def _resting(self, now: datetime) -> bool:
+        """Right after an outing (of any kind) the next scheduled one waits."""
+        if not self.state.last_outing_at:
+            return False
+        rest = timedelta(minutes=self._self_rules()[1])
+        return now - datetime.fromisoformat(self.state.last_outing_at) < rest
+
     async def _loop(self) -> None:
         await asyncio.sleep(30)
         while True:
             try:
                 now = _now()
-                if self.state.day != now.date().isoformat():
-                    self.state.new_day(now.date(), int(self.cfg.get("outings_per_day", 3)),
-                                       int(self.cfg.get("start_hour", 10)), int(self.cfg.get("end_hour", 23)),
-                                       self.rng, now)
-                    await asyncio.to_thread(self.state.save, self.state_path)
-                if due(now, self.state.plan, self.state.done, self.owner_last_seen,
-                       int(self.cfg.get("owner_idle_minutes", 30))):
+                await self._roll_day(now)
+                if not self._resting(now) and due(now, self.state.plan, self.state.done, self.owner_last_seen,
+                                                  int(self.cfg.get("owner_idle_minutes", 30))):
                     self.state.done += 1  # counted even if it fails: no retry storm
                     await asyncio.to_thread(self.state.save, self.state_path)
                     await self.outing()
@@ -205,11 +223,60 @@ class SurfingTheWeb(star.Star):
         """Tell her she goes online on her own, and what she saw lately."""
         if not self.cfg.get("inject_recent", True):
             return
-        owner_private = not event.get_group_id() and str(event.get_sender_id()) in self._owner_ids()
-        block = recent_block(self.state.recent, _now(), hours=int(self.cfg.get("recent_hours", 24)),
+        owner_private = self._owner_private(event)
+        now = _now()
+        self_left, self_ready = None, ""
+        per_day, cooldown = self._self_rules()
+        if owner_private and per_day > 0:
+            self_left = max(0, per_day - self.state.self_used)
+            if self.state.last_outing_at:
+                ready = datetime.fromisoformat(self.state.last_outing_at) + timedelta(minutes=cooldown)
+                self_ready = ready.strftime("%H:%M") if ready > now else ""
+        block = recent_block(self.state.recent, now, hours=int(self.cfg.get("recent_hours", 24)),
                              with_thoughts=owner_private, wishes=self.state.wishes,
-                             can_wish=owner_private and bool(self.cfg.get("search_sources", list(SEARCH_BUILTIN))))
+                             can_wish=owner_private and bool(self.cfg.get("search_sources", list(SEARCH_BUILTIN))),
+                             self_left=self_left, self_ready=self_ready)
         req.system_prompt = f"{(req.system_prompt or '').rstrip()}\n\n{block}\n"
+
+    @filter.llm_tool(name="surf_now")
+    async def tool_surf_now(self, event: AstrMessageEvent, topic: str = "", reason: str = ""):
+        """Go online by yourself right now, for a little while, and come back with what you saw. Optionally look a
+        topic up (public topic words only, never anyone's personal details). You can only do this a few times a
+        day, with a rest in between: go when you really feel like it, not just because someone keeps asking.
+
+        Args:
+            topic(string): optional, a few words to search, e.g. 明日方舟 新干员
+            reason(string): why you want to go now
+        """
+        if not self._owner_private(event):
+            logger.info("[surfing] surf_now refused outside the owner's private chat")
+            return "现在不能自己出门上网（只有和最亲近的人私聊时才可以）"
+        now = _now()
+        await self._roll_day(now)
+        ok, why = self.state.may_go_myself(now, *self._self_rules())
+        if not ok:
+            return why
+        if topic.strip():
+            fine, msg = State().add_wish(topic, "", now, self._blocked())  # same checks as a wish
+            if not fine:
+                return msg
+            topic = msg
+        self.state.self_used += 1  # counted before going: a failure is not a free retry
+        await asyncio.to_thread(self.state.save, self.state_path)
+        logger.info(f"[surfing] she goes online herself ({self.state.self_used} today): {topic!r} {reason!r}")
+        try:
+            outing = await asyncio.wait_for(self.outing(topic), timeout=100)
+        except asyncio.TimeoutError:
+            return "网太慢了，这次没逛成"
+        if outing is None:
+            return "现在上不了网"
+        left = max(0, self._self_rules()[0] - self.state.self_used)
+        head = (f"搜了「{outing.wish}」，找到 {outing.found} 条；" if outing.wish else "") + f"一共刷了 {outing.shown} 条"
+        if not outing.seen:
+            return f"逛回来了：{head}，没有想点开的。今天还能自己去 {left} 次"
+        lines = [f"- 在{s.site}看到《{s.title}》" + (f"，你当时想：{s.thought}" if s.thought else "") for s in outing.seen]
+        return (f"逛回来了：{head}，点开了 {len(outing.seen)} 条：\n" + "\n".join(lines)
+                + f"\n（这些已经记进你的记忆。今天还能自己去 {left} 次）")
 
     @filter.llm_tool(name="surf_wish")
     async def tool_wish(self, event: AstrMessageEvent, topic: str, reason: str = ""):
@@ -221,8 +288,7 @@ class SurfingTheWeb(star.Star):
             topic(string): a few words to search, e.g. 明日方舟 新干员
             reason(string): why you want to know
         """
-        owner_private = not event.get_group_id() and str(event.get_sender_id()) in self._owner_ids()
-        if not owner_private:
+        if not self._owner_private(event):
             # only the owner shapes what she goes looking for
             logger.info(f"[surfing] surf_wish refused outside the owner's private chat: {topic!r}")
             return "想上网找什么，只能私下和最亲近的人商量，现在不能记"
@@ -276,6 +342,8 @@ class SurfingTheWeb(star.Star):
         recent = [f"· {datetime.fromisoformat(r['at']).strftime('%m-%d %H:%M')} {r['site']}｜{r['title']}"
                   + (f"\n  {r['thought']}" if r.get("thought") else "") for r in self.state.recent[-8:]]
         wishes = "、".join(f"「{w['topic']}」" for w in self.state.wishes) or "（没有）"
+        per_day, _ = self._self_rules()
+        plan += f"\n她今天自己出门：{self.state.self_used}/{per_day} 次"
         last = self.state.outings[-1] if self.state.outings else None
         last_line = (f"\n上次出门：{', '.join(last.get('sources', []))}"
                      + (f"，搜「{last['wish']}」{last.get('found', 0)} 条" if last.get("wish") else "")) if last else ""

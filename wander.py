@@ -330,6 +330,8 @@ class State:
     recent: list[dict] = field(default_factory=list)  # Seen rows, newest last
     outings: list[dict] = field(default_factory=list)  # short reports, newest last
     wishes: list[dict] = field(default_factory=list)  # {"topic", "reason", "at"}: what she wants to look up
+    self_used: int = 0  # outings she started herself today
+    last_outing_at: str = ""  # ISO time of the last outing of any kind
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -351,6 +353,7 @@ class State:
         plan = plan_day(day, n, start_hour, end_hour, rng)
         self.plan = [t.isoformat() for t in plan]
         self.done = sum(1 for t in plan if t < now - timedelta(minutes=30))  # started late: skip the past
+        self.self_used = 0
 
     def remember(self, outing: Outing, keep_keys: int = 1000, keep_recent: int = 30) -> None:
         self.seen_keys = (self.seen_keys + [url_key(s.url) for s in outing.seen])[-keep_keys:]
@@ -379,6 +382,20 @@ class State:
     def take_wish(self) -> str:
         return self.wishes.pop(0)["topic"] if self.wishes else ""
 
+    def may_go_myself(self, now: datetime, per_day: int, cooldown_minutes: int) -> tuple[bool, str]:
+        """Whether she may start an outing herself now: a daily budget and a rest between outings, so being
+        talked into going online again and again does not work. Returns (allowed, why not)."""
+        if per_day <= 0:
+            return False, "自己出门上网现在是关着的"
+        if self.self_used >= per_day:
+            return False, f"今天已经自己出去 {self.self_used} 次了，明天再说"
+        if self.last_outing_at:
+            ready = datetime.fromisoformat(self.last_outing_at) + timedelta(minutes=cooldown_minutes)
+            if now < ready:
+                left = int((ready - now).total_seconds() // 60) + 1
+                return False, f"刚逛完没多久，歇一会儿吧（还要 {left} 分钟）"
+        return True, ""
+
 
 _DIGITS = re.compile(r"\d{5,}")
 _QUOTES = "\"'“”「」‘’"
@@ -396,7 +413,8 @@ def looks_personal(topic: str) -> bool:
 
 
 def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int = 5, *,
-                 with_thoughts: bool = False, wishes: list[dict] = (), can_wish: bool = False) -> str:
+                 with_thoughts: bool = False, wishes: list[dict] = (), can_wish: bool = False,
+                 self_left: int | None = None, self_ready: str = "") -> str:
     """What she saw online lately, for the system prompt (so she can bring it up before it is consolidated).
     Her thoughts are her inner life: only included when `with_thoughts` (the owner's private chat)."""
     since = now - timedelta(hours=hours)
@@ -421,5 +439,12 @@ def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int 
                      "只写公开的话题词（游戏名、作品名、新闻之类），不要写任何人的名字、住址、工作等个人信息")
         if wishes:
             lines.append("- 你记下想找的：" + "、".join(f"「{w['topic']}」" for w in wishes))
+    if self_left is not None:
+        if self_left > 0:
+            when = f"，{self_ready}以后才能再去" if self_ready else ""
+            lines.append(f"- 你也可以现在就自己上网（surf_now），可以顺便搜一个话题。今天还能自己去 {self_left} 次{when}。"
+                         "想去才去：别因为谁说一句就一直跑出去，正聊着天的时候先跟对方说一声再去")
+        else:
+            lines.append("- 今天自己上网的次数用完了，想看的先用 surf_wish 记下来，下次出门再看")
     lines.append("</surfing_the_web>")
     return "\n".join(lines)

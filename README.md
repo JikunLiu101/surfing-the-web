@@ -22,6 +22,17 @@ what it saw becomes part of its long-term memory and its diary.
 5. **Remember**: each item becomes an experience (see below). The system prompt of later chats mentions what it
    saw lately, so it can bring it up right away.
 
+### Going online by itself
+
+In the owner's private chat the persona also has a `surf_now(topic, reason)` tool: it goes out right away (looking
+the topic up, if any) and comes back with what it saw and thought, so it can tell you about it in the same reply.
+So that nobody can talk it into going online again and again:
+
+* only in the owner's private chat (anywhere else the tool refuses);
+* at most `self_outings_per_day` a day (default 3; scheduled outings and `/surf` do not count);
+* a rest of `self_cooldown_minutes` after any outing (default 60), which scheduled outings respect too;
+* the system prompt tells it how many are left and when it can go again, and to go only when it really wants to.
+
 ### Things it wants to look up
 
 In the owner's private chat the persona has a `surf_wish(topic, reason)` tool ("I want to see what's new in
