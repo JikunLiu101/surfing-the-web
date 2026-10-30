@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The rest after an outing drifts (`timing_jitter`, default give or take 20%) instead of always being
+  `self_cooldown_minutes`.
+
 ## 0.3.1 (2026-10-30)
 
 - Search defaults to Bilibili only; `web_search` (DuckDuckGo) stays available but is off by default: its snippets

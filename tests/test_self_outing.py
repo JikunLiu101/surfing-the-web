@@ -30,3 +30,20 @@ def test_prompt_tells_her_what_is_left():
     assert "别因为谁说一句就一直跑出去" in block
     assert "次数用完了" in recent_block([], NOW, self_left=0)
     assert "surf_now" not in recent_block([], NOW)  # not offered outside the owner's private chat
+
+
+def test_rest_after_an_outing_drifts():
+    import random as _r
+    rests = set()
+    for seed in range(20):
+        st = State()
+        st.rested_after(NOW, 60, 0.2, _r.Random(seed))
+        rest = (datetime.fromisoformat(st.rest_until) - NOW).total_seconds() / 60
+        assert 48 <= rest <= 72
+        rests.add(round(rest))
+        assert not st.may_go_myself(NOW + timedelta(minutes=47), 3, 60)[0]
+        assert st.may_go_myself(NOW + timedelta(minutes=73), 3, 60)[0]
+    assert len(rests) > 5
+    st = State()
+    st.rested_after(NOW, 60, 0, _r.Random(0))
+    assert datetime.fromisoformat(st.rest_until) == NOW + timedelta(minutes=60)

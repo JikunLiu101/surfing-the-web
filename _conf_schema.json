@@ -38,7 +38,13 @@
     "description": "Rest after an outing (minutes)",
     "type": "int",
     "default": 60,
-    "hint": "She cannot go out herself again sooner, and a scheduled outing waits as well."
+    "hint": "She cannot go out herself again sooner, and a scheduled outing waits as well. Drifts by timing_jitter each time."
+  },
+  "timing_jitter": {
+    "description": "How much the rest after an outing drifts",
+    "type": "float",
+    "default": 0.2,
+    "hint": "0.2: give or take 20%. 0: exact."
   },
   "sources": {
     "description": "Sites",

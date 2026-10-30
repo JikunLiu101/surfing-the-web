@@ -171,7 +171,7 @@ class SurfingTheWeb(star.Star):
             for row in buffered.rows:
                 await asyncio.to_thread(sink.record, *row)
             self.state.remember(outing)
-            self.state.last_outing_at = _now().isoformat()
+            self.state.rested_after(_now(), self._self_rules()[1], self._jitter(), self.rng)
             await asyncio.to_thread(self.state.save, self.state_path)
         logger.info(f"[surfing] outing ({', '.join(outing.sources)}"
                     + (f"; looked up {outing.wish!r}: {outing.found} found" if outing.wish else "")
@@ -189,10 +189,11 @@ class SurfingTheWeb(star.Star):
 
     def _resting(self, now: datetime) -> bool:
         """Right after an outing (of any kind) the next scheduled one waits."""
-        if not self.state.last_outing_at:
-            return False
-        rest = timedelta(minutes=self._self_rules()[1])
-        return now - datetime.fromisoformat(self.state.last_outing_at) < rest
+        ready = self.state.resting_until(self._self_rules()[1])
+        return ready is not None and now < ready
+
+    def _jitter(self) -> float:
+        return max(0.0, min(0.9, float(self.cfg.get("timing_jitter", 0.2))))
 
     async def _loop(self) -> None:
         await asyncio.sleep(30)
@@ -230,8 +231,8 @@ class SurfingTheWeb(star.Star):
         per_day, cooldown = self._self_rules()
         if owner_private and per_day > 0:
             self_left = max(0, per_day - self.state.self_used)
-            if self.state.last_outing_at:
-                ready = datetime.fromisoformat(self.state.last_outing_at) + timedelta(minutes=cooldown)
+            ready = self.state.resting_until(cooldown)
+            if ready is not None:
                 self_ready = ready.strftime("%H:%M") if ready > now else ""
         block = recent_block(self.state.recent, now, hours=int(self.cfg.get("recent_hours", 24)),
                              with_thoughts=owner_private, wishes=self.state.wishes,

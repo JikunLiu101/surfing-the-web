@@ -332,6 +332,7 @@ class State:
     wishes: list[dict] = field(default_factory=list)  # {"topic", "reason", "at"}: what she wants to look up
     self_used: int = 0  # outings she started herself today
     last_outing_at: str = ""  # ISO time of the last outing of any kind
+    rest_until: str = ""  # after an outing she rests until here (the rest drifts a little each time)
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -382,6 +383,19 @@ class State:
     def take_wish(self) -> str:
         return self.wishes.pop(0)["topic"] if self.wishes else ""
 
+    def resting_until(self, cooldown_minutes: int) -> datetime | None:
+        if self.rest_until:
+            return datetime.fromisoformat(self.rest_until)
+        if self.last_outing_at:
+            return datetime.fromisoformat(self.last_outing_at) + timedelta(minutes=cooldown_minutes)
+        return None
+
+    def rested_after(self, now: datetime, cooldown_minutes: float, ratio: float, rng: random.Random) -> None:
+        """An outing just ended: rest `cooldown_minutes`, give or take `ratio`."""
+        self.last_outing_at = now.isoformat()
+        spread = rng.uniform(1 - ratio, 1 + ratio) if ratio > 0 else 1.0
+        self.rest_until = (now + timedelta(minutes=cooldown_minutes * spread)).isoformat()
+
     def may_go_myself(self, now: datetime, per_day: int, cooldown_minutes: int) -> tuple[bool, str]:
         """Whether she may start an outing herself now: a daily budget and a rest between outings, so being
         talked into going online again and again does not work. Returns (allowed, why not)."""
@@ -389,8 +403,8 @@ class State:
             return False, "自己出门上网现在是关着的"
         if self.self_used >= per_day:
             return False, f"今天已经自己出去 {self.self_used} 次了，明天再说"
-        if self.last_outing_at:
-            ready = datetime.fromisoformat(self.last_outing_at) + timedelta(minutes=cooldown_minutes)
+        ready = self.resting_until(cooldown_minutes)
+        if ready is not None:
             if now < ready:
                 left = int((ready - now).total_seconds() // 60) + 1
                 return False, f"刚逛完没多久，歇一会儿吧（还要 {left} 分钟）"
