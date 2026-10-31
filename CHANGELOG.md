@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- When the owner asks the persona to go online, its own limits no longer stop it: `surf_now(..., asked=true)` is
+  accepted when the owner's message in this private chat talks about going online, does not use up
+  `self_outings_per_day` and skips the rest; such outings have their own ceiling (`asked_outings_per_day`,
+  default 10) and gap (`asked_min_gap_minutes`, default 5). The prompt says so even when its own outings are used
+  up, and `being_abilities` lists it as a separate ability (`surfing-the-web:asked`), so the persona notices it.
 - Fix: the Bilibili QR login said "expired" right after the scan was confirmed. Bilibili now hands out the session
   in the Set-Cookie headers of the confirming poll, not in `data.url`, and a confirmed key answers "expired" when
   polled again. The login is now taken from Set-Cookie (or else from the URL, percent-encoded the way a browser

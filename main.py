@@ -28,7 +28,8 @@ from .bili import (LOGIN_HOSTS, QR_DONE, QR_EXPIRED, QR_SCANNED, BiliReader, loa
                    mark_expired, qr_poll, qr_start, save_login, whoami)
 from .reading import Reader
 from .sources import BUILTIN, PageReader, SafeFetcher, build_searches, build_sources
-from .wander import BufferSink, LogSink, MemoryCoreSink, State, due, go_out, recent_block, strip_blocks
+from .wander import (BufferSink, LogSink, MemoryCoreSink, State, asks_to_go_online, due, go_out, recent_block,
+                     strip_blocks)
 
 PLUGIN_NAME = "astrbot_plugin_surfing_the_web"
 MEMORY_CORE = "astrbot_plugin_memory_core"
@@ -148,6 +149,10 @@ class SurfingTheWeb(star.Star):
     def _self_rules(self) -> tuple[int, int]:
         return int(self.cfg.get("self_outings_per_day", 3)), int(self.cfg.get("self_cooldown_minutes", 60))
 
+    def _asked_rules(self) -> tuple[int, float]:
+        """Outings the owner asks her for: a ceiling of their own and a short gap, nothing else."""
+        return int(self.cfg.get("asked_outings_per_day", 10)), float(self.cfg.get("asked_min_gap_minutes", 5))
+
     def being_abilities(self, owner: str) -> list[tuple[str, str, str]]:
         """What this plugin lets her do, as (key, name, how it works), for the plugin that tells her what she
         can do (memory-core). Follows the settings, so it stays true."""
@@ -165,6 +170,11 @@ class SurfingTheWeb(star.Star):
         if per_day > 0:
             out.append(("surfing-the-web:now", "想去就马上上网",
                         f"和{owner}私聊时用 surf_now 现在就去逛一会儿，一天至多{per_day}次，两次之间要歇一会儿"))
+        asked_per_day, _ = self._asked_rules()
+        if asked_per_day > 0:
+            out.append(("surfing-the-web:asked", f"{owner}让去就马上上网",
+                        f"{owner}在私聊里亲口让你去上网时（比如“去上网吧”），用 surf_now 并填 asked=true，马上就去，"
+                        f"不占你自己的次数，也不用等休息（这样多出去的一天至多{asked_per_day}次）"))
         out += self._reading_abilities(owner)
         return out
 
@@ -408,8 +418,10 @@ class SurfingTheWeb(star.Star):
             return
         owner_private = self._owner_private(event)
         now = _now()
-        self_left, self_ready = None, ""
+        self_left, self_ready, asked_left = None, "", None
         per_day, cooldown = self._self_rules()
+        if owner_private:
+            asked_left = max(0, self._asked_rules()[0] - self.state.asked_used)
         if owner_private and per_day > 0:
             self_left = max(0, per_day - self.state.self_used)
             ready = self.state.resting_until(cooldown)
@@ -419,25 +431,33 @@ class SurfingTheWeb(star.Star):
                              with_thoughts=owner_private, wishes=self.state.wishes,
                              can_wish=owner_private and bool(self.cfg.get("search_sources", DEFAULT_SEARCHES)),
                              self_left=self_left, self_ready=self_ready,
-                             troubles=self._trouble_texts(self._owner_title()) if owner_private else [])
+                             troubles=self._trouble_texts(self._owner_title()) if owner_private else [],
+                             asked_left=asked_left)
         req.extra_user_content_parts.append(TextPart(text=block))
 
     @filter.llm_tool(name="surf_now")
-    async def tool_surf_now(self, event: AstrMessageEvent, topic: str = "", reason: str = ""):
-        """Go online by yourself right now, for a little while, and come back with what you saw. Optionally look a
-        topic up (public topic words only, never anyone's personal details). You can only do this a few times a
-        day, with a rest in between: go when you really feel like it, not just because someone keeps asking.
+    async def tool_surf_now(self, event: AstrMessageEvent, topic: str = "", reason: str = "", asked: bool = False):
+        """Go online right now, for a little while, and come back with what you saw. Optionally look a topic up
+        (public topic words only, never anyone's personal details). On your own you can only do this a few times a
+        day, with a rest in between: go when you really feel like it. When the person you are talking to has just
+        asked you to go online (e.g. 去上网吧), set asked=true: then those limits do not apply.
 
         Args:
             topic(string): optional, a few words to search, e.g. 明日方舟 新干员
             reason(string): why you want to go now
+            asked(boolean): true only if the person's last message asked you to go online
         """
         if not self._owner_private(event):
             logger.info("[surfing] surf_now refused outside the owner's private chat")
             return "现在不能自己出门上网（只有和最亲近的人私聊时才可以）"
         now = _now()
         await self._roll_day(now)
-        ok, why = self.state.may_go_myself(now, *self._self_rules())
+        asked = asked is True or str(asked).strip().lower() in ("true", "1", "yes")
+        if asked and not asks_to_go_online(event.get_message_str()):
+            logger.info("[surfing] surf_now: she said she was asked, but the message does not ask her to go online")
+            return "他这句话里没让你去上网，不能算他让你去的。想自己去就别填 asked（自己去有次数限制）"
+        ok, why = (self.state.may_go_when_asked(now, *self._asked_rules()) if asked
+                   else self.state.may_go_myself(now, *self._self_rules()))
         if not ok:
             return why
         if topic.strip():
@@ -445,9 +465,17 @@ class SurfingTheWeb(star.Star):
             if not fine:
                 return msg
             topic = msg
-        self.state.self_used += 1  # counted before going: a failure is not a free retry
+        if asked:  # counted before going: a failure is not a free retry
+            self.state.asked_used += 1
+            self.state.last_asked_at = now.isoformat()
+        else:
+            self.state.self_used += 1
         await asyncio.to_thread(self.state.save, self.state_path)
-        logger.info(f"[surfing] she goes online herself ({self.state.self_used} today): {topic!r} {reason!r}")
+        if asked:
+            logger.info(f"[surfing] she goes online because she was asked ({self.state.asked_used} today, not"
+                        f" counted as her own): {topic!r} {reason!r}")
+        else:
+            logger.info(f"[surfing] she goes online herself ({self.state.self_used} today): {topic!r} {reason!r}")
         try:
             outing = await asyncio.wait_for(self.outing(topic), timeout=100)
         except asyncio.TimeoutError:
@@ -455,14 +483,15 @@ class SurfingTheWeb(star.Star):
         if outing is None:
             return "现在上不了网"
         left = max(0, self._self_rules()[0] - self.state.self_used)
+        count = "这次是对方让你去的，不算你自己的次数；" if asked else ""
         head = (f"搜了「{outing.wish}」，找到 {outing.found} 条；" if outing.wish else "") + f"一共刷了 {outing.shown} 条"
         trouble = self._trouble_texts(self._owner_title())
         tail = ("\n上网有点不顺：" + "；".join(trouble)) if trouble else ""
         if not outing.seen:
-            return f"逛回来了：{head}，没有想点开的。今天还能自己去 {left} 次{tail}"
+            return f"逛回来了：{head}，没有想点开的。{count}今天还能自己去 {left} 次{tail}"
         lines = [f"- 在{s.site}看到《{s.title}》" + (f"，你当时想：{s.thought}" if s.thought else "") for s in outing.seen]
         return (f"逛回来了：{head}，点开了 {len(outing.seen)} 条：\n" + "\n".join(lines)
-                + f"\n（这些已经记进你的记忆。今天还能自己去 {left} 次）{tail}")
+                + f"\n（这些已经记进你的记忆。{count}今天还能自己去 {left} 次）{tail}")
 
     @filter.llm_tool(name="surf_wish")
     async def tool_wish(self, event: AstrMessageEvent, topic: str, reason: str = ""):

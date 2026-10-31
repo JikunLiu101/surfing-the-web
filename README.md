@@ -34,6 +34,12 @@ So that nobody can talk it into going online again and again:
 * a rest of `self_cooldown_minutes` after any outing (default 60), which scheduled outings respect too;
 * the system prompt tells it how many are left and when it can go again, and to go only when it really wants to.
 
+When the owner asks it to go ("go online!"), those limits do not apply: it calls `surf_now(..., asked=true)`,
+which the plugin accepts only if the owner's message in this chat really talks about going online (going out,
+browsing, searching, looking something up, Bilibili, videos...), so the persona cannot just claim it was asked.
+Such outings do not use up its own ones; they have a ceiling of their own (`asked_outings_per_day`, default 10)
+and at least `asked_min_gap_minutes` (default 5) between them.
+
 ### Things it wants to look up
 
 In the owner's private chat the persona has a `surf_wish(topic, reason)` tool ("I want to see what's new in

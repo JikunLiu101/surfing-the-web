@@ -338,6 +338,8 @@ class State:
     outings: list[dict] = field(default_factory=list)  # short reports, newest last
     wishes: list[dict] = field(default_factory=list)  # {"topic", "reason", "at"}: what she wants to look up
     self_used: int = 0  # outings she started herself today
+    asked_used: int = 0  # outings the owner asked her for today (not counted in self_used)
+    last_asked_at: str = ""  # ISO time of the last outing the owner asked for
     last_outing_at: str = ""  # ISO time of the last outing of any kind
     rest_until: str = ""  # after an outing she rests until here (the rest drifts a little each time)
     troubles: list[str] = field(default_factory=list)  # what did not work on the last outing (codes)
@@ -363,6 +365,7 @@ class State:
         self.plan = [t.isoformat() for t in plan]
         self.done = sum(1 for t in plan if t < now - timedelta(minutes=30))  # started late: skip the past
         self.self_used = 0
+        self.asked_used = 0
 
     def remember(self, outing: Outing, keep_keys: int = 1000, keep_recent: int = 30) -> None:
         self.seen_keys = (self.seen_keys + [url_key(s.url) for s in outing.seen])[-keep_keys:]
@@ -418,6 +421,28 @@ class State:
                 return False, f"刚逛完没多久，歇一会儿吧（还要 {left} 分钟）"
         return True, ""
 
+    def may_go_when_asked(self, now: datetime, per_day: int, min_gap_minutes: float) -> tuple[bool, str]:
+        """Whether she may go because the owner asked her to: not limited by her own budget or her rest, only by
+        a ceiling of its own and a short gap (a loop or a double call is not the owner asking twice)."""
+        if per_day <= 0:
+            return False, "让你去也不能多去：这个设置是关着的，按你自己的次数来"
+        if self.asked_used >= per_day:
+            return False, f"今天已经因为对方让你去，多出去了 {self.asked_used} 次，真的够了，明天再说"
+        if self.last_asked_at:
+            ready = datetime.fromisoformat(self.last_asked_at) + timedelta(minutes=min_gap_minutes)
+            if now < ready:
+                return False, "刚刚才出去过，过几分钟再去"
+        return True, ""
+
+
+# What the owner says when asking her to go online (checked in the owner's own message, so she cannot claim it).
+_ASKED_WORDS = re.compile(r"上网|网上|出门|出去|逛|搜|查|找|看看|去看|刷|B站|b站|哔哩|视频|surf", re.I)
+
+
+def asks_to_go_online(message: str) -> bool:
+    """Does this message of the owner's ask her to go online (or at least talk about it)?"""
+    return bool(_ASKED_WORDS.search(message or ""))
+
 
 _DIGITS = re.compile(r"\d{5,}")
 _QUOTES = "\"'“”「」‘’"
@@ -436,7 +461,8 @@ def looks_personal(topic: str) -> bool:
 
 def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int = 5, *,
                  with_thoughts: bool = False, wishes: list[dict] = (), can_wish: bool = False,
-                 self_left: int | None = None, self_ready: str = "", troubles: list[str] = ()) -> str:
+                 self_left: int | None = None, self_ready: str = "", troubles: list[str] = (),
+                 asked_left: int | None = None) -> str:
     """What she saw online lately, sent with the user's message (so she can bring it up before it is consolidated).
     Her thoughts are her inner life: only included when `with_thoughts` (the owner's private chat), like
     `troubles`: what does not work right now and whom to ask about it."""
@@ -469,6 +495,9 @@ def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int 
                          "想去才去：别因为谁说一句就一直跑出去，正聊着天的时候先跟对方说一声再去")
         else:
             lines.append("- 今天自己上网的次数用完了，想看的先用 surf_wish 记下来，下次出门再看")
+    if asked_left:
+        lines.append("- 对方亲口让你去上网时（比如“去上网吧”“去B站搜搜看”），不受上面的次数和休息限制：马上用 surf_now，"
+                     "并填 asked=true；只有他这句话里真让你去了才这么填。不用说“次数用完了”")
     if with_thoughts and troubles:
         lines.append("- 上网有点不顺（自己修不了，想说就跟对方提一句，别反复念叨）：")
         lines += [f"  - {t}" for t in troubles]

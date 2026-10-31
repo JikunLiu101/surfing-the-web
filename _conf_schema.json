@@ -34,6 +34,18 @@
     "default": 3,
     "hint": "With the surf_now tool, only in the owner's private chat. Scheduled outings and /surf do not count. 0: she cannot go online by herself."
   },
+  "asked_outings_per_day": {
+    "description": "Extra outings per day when the owner asks for them",
+    "type": "int",
+    "default": 10,
+    "hint": "When the owner asks her to go online in the private chat (and says so in that message), surf_now ignores self_outings_per_day and the rest; this is the ceiling for such outings. 0: asking does not help, her own limits apply."
+  },
+  "asked_min_gap_minutes": {
+    "description": "Least gap between outings the owner asks for (minutes)",
+    "type": "int",
+    "default": 5,
+    "hint": "Keeps a loop or a double tool call from sending her out again and again."
+  },
   "self_cooldown_minutes": {
     "description": "Rest after an outing (minutes)",
     "type": "int",
