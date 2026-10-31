@@ -16,9 +16,10 @@ from pathlib import Path
 from astrbot.api import logger, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
+from astrbot.core.agent.message import TextPart
 
 from .sources import BUILTIN, build_searches, build_sources
-from .wander import BufferSink, LogSink, MemoryCoreSink, State, due, go_out, recent_block
+from .wander import BufferSink, LogSink, MemoryCoreSink, State, due, go_out, recent_block, strip_blocks
 
 PLUGIN_NAME = "astrbot_plugin_surfing_the_web"
 MEMORY_CORE = "astrbot_plugin_memory_core"
@@ -243,7 +244,13 @@ class SurfingTheWeb(star.Star):
 
     @filter.on_llm_request()
     async def inject(self, event: AstrMessageEvent, req: ProviderRequest):
-        """Tell her she goes online on her own, and what she saw lately."""
+        """Tell her she goes online on her own, and what she saw lately. It goes with the user's message (it
+        changes after every outing; the system prompt stays the same, so the provider's prompt cache covers it)
+        and is taken out of the earlier messages in the history."""
+        try:
+            strip_blocks(req.contexts, ("surfing_the_web",))
+        except Exception as exc:  # noqa: BLE001 - never block a reply
+            logger.warning(f"[surfing-the-web] history cleanup failed: {exc}")
         if not self.cfg.get("inject_recent", True):
             return
         owner_private = self._owner_private(event)
@@ -259,7 +266,7 @@ class SurfingTheWeb(star.Star):
                              with_thoughts=owner_private, wishes=self.state.wishes,
                              can_wish=owner_private and bool(self.cfg.get("search_sources", DEFAULT_SEARCHES)),
                              self_left=self_left, self_ready=self_ready)
-        req.system_prompt = f"{(req.system_prompt or '').rstrip()}\n\n{block}\n"
+        req.extra_user_content_parts.append(TextPart(text=block))
 
     @filter.llm_tool(name="surf_now")
     async def tool_surf_now(self, event: AstrMessageEvent, topic: str = "", reason: str = ""):

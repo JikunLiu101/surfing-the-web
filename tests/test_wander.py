@@ -154,3 +154,16 @@ def test_memory_core_sink(tmp_path):
         assert len(rows) == 2 and "web" in core.pending_consolidation()
         thought = rows[-1][1]
         assert thought.kind == "thought" and thought.actor == core.entity("self").id
+
+
+def test_strip_blocks_keeps_history_stable():
+    from surfing_the_web.wander import strip_blocks
+    block = "<surfing_the_web>\n- note\n</surfing_the_web>"
+    history = [{"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "text", "text": block}]},
+               {"role": "assistant", "content": "ok"},
+               {"role": "user", "content": f"again\n\n{block}"},
+               {"role": "user", "content": [{"type": "text", "text": block}]}]
+    assert strip_blocks(history, ("surfing_the_web",)) == 2
+    assert history[0]["content"] == [{"type": "text", "text": "hi"}]
+    assert history[2]["content"] == "again" and len(history[3]["content"]) == 1
+    assert strip_blocks(history, ("surfing_the_web",)) == 0

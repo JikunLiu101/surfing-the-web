@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Prompt caching: what she saw lately (`<surfing_the_web>`) goes with the user's message instead of the system
+  prompt, and is taken out of the earlier messages in the history (`strip_blocks`), so the system prompt and the
+  history stay the same between requests and the provider's prompt cache covers them.
 - `being_abilities(owner)`: tells memory-core what going online lets her do (follows the settings), so she knows
   without being told.
 - The rest after an outing drifts (`timing_jitter`, default give or take 20%) instead of always being
