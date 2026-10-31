@@ -340,6 +340,7 @@ class State:
     self_used: int = 0  # outings she started herself today
     last_outing_at: str = ""  # ISO time of the last outing of any kind
     rest_until: str = ""  # after an outing she rests until here (the rest drifts a little each time)
+    troubles: list[str] = field(default_factory=list)  # what did not work on the last outing (codes)
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -435,9 +436,10 @@ def looks_personal(topic: str) -> bool:
 
 def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int = 5, *,
                  with_thoughts: bool = False, wishes: list[dict] = (), can_wish: bool = False,
-                 self_left: int | None = None, self_ready: str = "") -> str:
+                 self_left: int | None = None, self_ready: str = "", troubles: list[str] = ()) -> str:
     """What she saw online lately, sent with the user's message (so she can bring it up before it is consolidated).
-    Her thoughts are her inner life: only included when `with_thoughts` (the owner's private chat)."""
+    Her thoughts are her inner life: only included when `with_thoughts` (the owner's private chat), like
+    `troubles`: what does not work right now and whom to ask about it."""
     since = now - timedelta(hours=hours)
     rows = []
     for r in recent:
@@ -467,6 +469,9 @@ def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int 
                          "想去才去：别因为谁说一句就一直跑出去，正聊着天的时候先跟对方说一声再去")
         else:
             lines.append("- 今天自己上网的次数用完了，想看的先用 surf_wish 记下来，下次出门再看")
+    if with_thoughts and troubles:
+        lines.append("- 上网有点不顺（自己修不了，想说就跟对方提一句，别反复念叨）：")
+        lines += [f"  - {t}" for t in troubles]
     lines.append("</surfing_the_web>")
     return "\n".join(lines)
 

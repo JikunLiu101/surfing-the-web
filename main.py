@@ -24,8 +24,8 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
 
-from .bili import (LOGIN_HOSTS, QR_DONE, QR_EXPIRED, QR_SCANNED, BiliReader, load_login, qr_poll, qr_start,
-                   save_login, whoami)
+from .bili import (LOGIN_HOSTS, QR_DONE, QR_EXPIRED, QR_SCANNED, BiliReader, load_login, login_state,
+                   mark_expired, qr_poll, qr_start, save_login, whoami)
 from .reading import Reader
 from .sources import BUILTIN, PageReader, SafeFetcher, build_searches, build_sources
 from .wander import BufferSink, LogSink, MemoryCoreSink, State, due, go_out, recent_block, strip_blocks
@@ -156,14 +156,83 @@ class SurfingTheWeb(star.Star):
             out.append(("surfing-the-web:outings", "自己上网逛逛",
                         f"每天{int(self.cfg.get('start_hour', 10))}点到{int(self.cfg.get('end_hour', 23))}点之间会自己"
                         f"出门{int(self.cfg.get('outings_per_day', 3))}次左右，刷几个常去的站点，看到的会记下来"))
-        if self.cfg.get("search_sources", DEFAULT_SEARCHES):
+        searches = self._searches()
+        if searches:
+            where = "和".join(dict.fromkeys(s.site for s in searches))
             out.append(("surfing-the-web:wish", "记下想上网查的",
-                        f"和{owner}私聊时用 surf_wish 记下想查的话题，下次出门先去搜（B站"
-                        + ("和网页" if self._deepseek_key() else "") + "）"))
+                        f"和{owner}私聊时用 surf_wish 记下想查的话题，下次出门先去搜（{where}）"))
         per_day, cooldown = self._self_rules()
         if per_day > 0:
             out.append(("surfing-the-web:now", "想去就马上上网",
                         f"和{owner}私聊时用 surf_now 现在就去逛一会儿，一天至多{per_day}次，两次之间要歇一会儿"))
+        out += self._reading_abilities(owner)
+        return out
+
+    def _reading_abilities(self, owner: str) -> list[tuple[str, str, str]]:
+        """What opening something gets her, and how to get back what does not work. Reading subtitles is its own
+        entry: it comes with the Bilibili login and goes when the login expires, so she notices both."""
+        reads, fixes = [], []
+        if self.cfg.get("read_pages", True):
+            if self._deepseek_key():
+                reads.append("网页（包括搜到的）能读正文")
+            else:
+                fixes.append(f"读网页正文要一个 DeepSeek key，现在没有，得{owner}在插件配置里填上")
+        bili = self._bili_state()
+        if bili != "off":
+            if bili == "ok":
+                reads.append("B站视频能读字幕（里面说了什么）")
+            if self._viewer() is not None:
+                reads.append("B站视频没字幕时能看里面几个画面")
+            if bili == "none":
+                fixes.append(f"读B站字幕要{owner}在电脑的网页对话里发 /surf_bili_login，用手机B站扫码给你登一个账号，"
+                             "现在还没登")
+            elif bili == "expired":
+                fixes.append(f"B站账号登录过期了，读不到字幕；要{owner}在电脑的网页对话里发 /surf_bili_login 重新扫码")
+        out = []
+        if reads or fixes:
+            text = "；".join(reads) if reads else "只看得到标题和简介"
+            out.append(("surfing-the-web:read", "上网时点开看内容", text + ("。" + "；".join(fixes) if fixes else "")))
+        if bili == "ok":
+            out.append(("surfing-the-web:subtitles", "看B站视频里说了什么",
+                        f"点开B站视频能读到里面说的话（字幕），用的是{owner}给你登的B站账号；登录大约半年后会过期"))
+        return out
+
+    def _bili_state(self) -> str:
+        """"off" (not reading videos), "ok", "expired" or "none" (never logged in)."""
+        return login_state(self.login_path) if self.cfg.get("read_videos", True) else "off"
+
+    def _searches(self):
+        return build_searches(list(self.cfg.get("search_sources", DEFAULT_SEARCHES)), self._deepseek_key())
+
+    def _owner_title(self) -> str:
+        return str(getattr(self._memory(), "owner_title", "") or "主人")
+
+    def _trouble_texts(self, owner: str) -> list[str]:
+        """What does not work right now, in her words, with whom to ask (for her note and surf_now)."""
+        out = []
+        if self._bili_state() == "expired":
+            out.append(f"B站账号登录过期了：点开视频读不到字幕，只能看画面。请{owner}在电脑的网页对话里发 "
+                       "/surf_bili_login 重新扫码就好")
+        texts = {
+            "deepseek_balance": f"网页搜索、读网页用的 DeepSeek 余额不够了，搜不了也读不了网页正文；要{owner}去充值",
+            "deepseek_key": f"网页搜索、读网页用的 DeepSeek key 不能用了；要{owner}检查一下",
+            "vision_down": f"看画面用的本机模型没有反应（可能没开），没字幕的视频看不了画面；要{owner}看看电脑上的 Ollama",
+        }
+        out += [texts[t] for t in self.state.troubles if t in texts]
+        return out
+
+    @staticmethod
+    def _troubles_of(outing, reader) -> list[str]:
+        """Codes for what did not work on this outing (kept until the next outing)."""
+        errors = " ".join(outing.errors)
+        out = []
+        if "api.deepseek.com" in errors and "HTTP 402" in errors:
+            out.append("deepseek_balance")
+        if "api.deepseek.com" in errors and "HTTP 401" in errors:
+            out.append("deepseek_key")
+        bili = reader.bili
+        if bili is not None and bili.looks and bili.vision_failures >= bili.looks:
+            out.append("vision_down")
         return out
 
     async def outing(self, topic: str = ""):
@@ -184,7 +253,7 @@ class SurfingTheWeb(star.Star):
 
         sink = self._sink()
         buffered = BufferSink()  # memory-core writes block: they run in a thread afterwards
-        searches = build_searches(list(self.cfg.get("search_sources", DEFAULT_SEARCHES)), self._deepseek_key())
+        searches = self._searches()
         reader = self._reader()
         async with self._lock:
             from_wishes = not topic
@@ -209,7 +278,12 @@ class SurfingTheWeb(star.Star):
                     + f"): {outing.shown} shown, {len(outing.seen)} opened"
                     + (f", errors: {outing.errors}" if outing.errors else ""))
         if reader.bili is not None and reader.bili.login_expired:
-            self._warn_once("bili-expired", "[surfing] the Bilibili login has expired: send /surf_bili_login again")
+            await asyncio.to_thread(mark_expired, self.login_path)
+            logger.warning("[surfing] the Bilibili login has expired: send /surf_bili_login again")
+        self.state.troubles = self._troubles_of(outing, reader)
+        if self.state.troubles:
+            logger.warning(f"[surfing] troubles on this outing: {', '.join(self.state.troubles)}")
+        await asyncio.to_thread(self.state.save, self.state_path)
         return outing
 
     # ---------------------------------------------------------------- reading what she opens
@@ -344,7 +418,8 @@ class SurfingTheWeb(star.Star):
         block = recent_block(self.state.recent, now, hours=int(self.cfg.get("recent_hours", 24)),
                              with_thoughts=owner_private, wishes=self.state.wishes,
                              can_wish=owner_private and bool(self.cfg.get("search_sources", DEFAULT_SEARCHES)),
-                             self_left=self_left, self_ready=self_ready)
+                             self_left=self_left, self_ready=self_ready,
+                             troubles=self._trouble_texts(self._owner_title()) if owner_private else [])
         req.extra_user_content_parts.append(TextPart(text=block))
 
     @filter.llm_tool(name="surf_now")
@@ -381,11 +456,13 @@ class SurfingTheWeb(star.Star):
             return "现在上不了网"
         left = max(0, self._self_rules()[0] - self.state.self_used)
         head = (f"搜了「{outing.wish}」，找到 {outing.found} 条；" if outing.wish else "") + f"一共刷了 {outing.shown} 条"
+        trouble = self._trouble_texts(self._owner_title())
+        tail = ("\n上网有点不顺：" + "；".join(trouble)) if trouble else ""
         if not outing.seen:
-            return f"逛回来了：{head}，没有想点开的。今天还能自己去 {left} 次"
+            return f"逛回来了：{head}，没有想点开的。今天还能自己去 {left} 次{tail}"
         lines = [f"- 在{s.site}看到《{s.title}》" + (f"，你当时想：{s.thought}" if s.thought else "") for s in outing.seen]
         return (f"逛回来了：{head}，点开了 {len(outing.seen)} 条：\n" + "\n".join(lines)
-                + f"\n（这些已经记进你的记忆。今天还能自己去 {left} 次）")
+                + f"\n（这些已经记进你的记忆。今天还能自己去 {left} 次）{tail}")
 
     @filter.llm_tool(name="surf_wish")
     async def tool_wish(self, event: AstrMessageEvent, topic: str, reason: str = ""):
@@ -517,7 +594,9 @@ class SurfingTheWeb(star.Star):
                     name = await whoami(f, login)
             except Exception as exc:  # noqa: BLE001
                 name = f"（查不了：{exc}）"
-        if not login:
+        if login_state(self.login_path) == "expired":
+            bili = "B站：登录过期了，再发 /surf_bili_login"
+        elif not login:
             bili = "B站：没登录（读不了字幕），发 /surf_bili_login"
         else:
             bili = f"B站：登录着 {name}" if name else "B站：登录过期了，再发 /surf_bili_login"

@@ -46,15 +46,36 @@ LOOK_PROMPT = ("这张图是B站视频《{title}》里按时间顺序截下来�
 # ------------------------------------------------------------------ login
 
 
-def load_login(path: Path) -> dict:
-    """The saved login cookies, or {} when there is none."""
+def _read_login(path: Path) -> dict:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    if not isinstance(data, dict) or not data.get("SESSDATA"):
+    return data if isinstance(data, dict) and data.get("SESSDATA") else {}
+
+
+def load_login(path: Path) -> dict:
+    """The saved login cookies, or {} when there is none or it has expired."""
+    data = _read_login(path)
+    if not data or data.get("expired"):
         return {}
     return {k: str(data[k]) for k in LOGIN_KEYS if data.get(k)}
+
+
+def login_state(path: Path) -> str:
+    """"ok", "expired" (Bilibili stopped accepting it; scan again) or "none"."""
+    data = _read_login(path)
+    return "none" if not data else ("expired" if data.get("expired") else "ok")
+
+
+def mark_expired(path: Path) -> None:
+    """Remember that the saved login no longer works, so it is not tried again and she can be told."""
+    data = _read_login(path)
+    if data and not data.get("expired"):
+        data["expired"] = int(time.time())
+        tmp = Path(path).with_suffix(".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        tmp.replace(path)
 
 
 def save_login(path: Path, cookies: dict) -> None:
@@ -207,6 +228,7 @@ class BiliReader:
         self.see = see
         self.frames, self.max_looks, self.subtitle_limit = frames, max_looks, subtitle_limit
         self.looks = 0  # videos looked at with the vision model in this outing (it is slow)
+        self.vision_failures = 0  # of those, how many the vision model did not answer
         self.login_expired = False
         self._device: dict | None = None
 
@@ -305,5 +327,9 @@ class BiliReader:
             frames.append(crop_tile(got[k], t % per, cols, rows))
         if not frames:
             return ""
-        seen = await self.see(stitch(frames), LOOK_PROMPT.format(title=title, n=len(frames)))
+        try:
+            seen = await self.see(stitch(frames), LOOK_PROMPT.format(title=title, n=len(frames)))
+        except Exception:
+            self.vision_failures += 1
+            raise
         return clip(re.sub(r"\s+", " ", seen or "").strip(), 400)

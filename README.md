@@ -61,6 +61,11 @@ What a list shows is often just a title. Opening an item reads it:
 
 `/surf_bili_status` shows whether the login still works and what can be read; `/surf_bili_logout` deletes it.
 
+The persona knows all this: the abilities it reports to memory-core say what opening something gets it, and how to
+get back what is missing (reading subtitles is its own entry, so it notices getting and losing it). When something
+did not work on the last outing (the login expired, the DeepSeek balance ran out, the vision model did not answer),
+the owner's private chat tells it what happened and what the owner can do.
+
 ## Safety
 
 | | |

@@ -12,6 +12,12 @@
 - `SafeFetcher` can read bytes and POST JSON; credentials are dropped when a redirect leaves the host. Bilibili
   requests carry a device id (buvid3) handed out by Bilibili, without which video pages answer 412.
 - The picked items are opened at the same time; content that turns out to contain a blocked word is closed.
+- She knows what opening something gets her, and whom to ask when it breaks: `being_abilities` reports
+  "上网时点开看内容" (with how to get back what is missing) and, while the Bilibili login works, a separate
+  "看B站视频里说了什么", so memory-core lets her notice both getting it and losing it. A login Bilibili stops
+  accepting is marked expired. What did not work on the last outing (login expired, DeepSeek balance or key, the
+  vision model not answering) is told to her in the owner's private chat and in the `surf_now` result, with what
+  the owner can do about it.
 
 - Prompt caching: what she saw lately (`<surfing_the_web>`) goes with the user's message instead of the system
   prompt, and is taken out of the earlier messages in the history (`strip_blocks`), so the system prompt and the
