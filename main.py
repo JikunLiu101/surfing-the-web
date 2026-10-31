@@ -3,13 +3,19 @@
 A few times a day, when nobody is chatting with it, the persona looks at a few public lists (Bilibili, tech
 news, forums...), opens what it finds interesting and thinks something about it. What it saw becomes its own
 experience: with the memory-core plugin, episodes in its long-term memory (consolidated, in the diary);
-without it, a local log. Read-only, allow-listed sites, no login, no cookies, no tools while browsing.
+without it, a local log. Read-only, allow-listed sites, no tools while browsing.
+
+Opening something means reading it: a web page through DeepSeek's Fetch API (search through its Search API,
+with the DeepSeek key AstrBot already has), a Bilibili video through its subtitles (with a Bilibili account the
+owner logs in by scanning a QR code, /surf_bili_login) or, without subtitles, a few frames described by a vision
+model.
 """
 
 from __future__ import annotations
 
 import asyncio
 import random
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -18,12 +24,15 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
 
-from .sources import BUILTIN, build_searches, build_sources
+from .bili import (LOGIN_HOSTS, QR_DONE, QR_EXPIRED, QR_SCANNED, BiliReader, load_login, qr_poll, qr_start,
+                   save_login, whoami)
+from .reading import Reader
+from .sources import BUILTIN, PageReader, SafeFetcher, build_searches, build_sources
 from .wander import BufferSink, LogSink, MemoryCoreSink, State, due, go_out, recent_block, strip_blocks
 
 PLUGIN_NAME = "astrbot_plugin_surfing_the_web"
 MEMORY_CORE = "astrbot_plugin_memory_core"
-DEFAULT_SEARCHES = ["bilibili_search"]  # web_search is optional: its snippets say little
+DEFAULT_SEARCHES = ["bilibili_search", "web_search"]
 DEFAULT_BLOCKED = ["翻墙", "梯子", "科学上网", "VPN", "政治", "政府", "领导人", "色情", "赌博"]
 IDENTITY_DOCS = (("self", "identity"), ("self-image", "self_image"), ("voice", "voice_examples"))
 
@@ -39,6 +48,8 @@ class SurfingTheWeb(star.Star):
         self.data_dir = Path(star.StarTools.get_data_dir(PLUGIN_NAME))
         self.state_path = self.data_dir / "state.json"
         self.state = State.load(self.state_path)
+        self.login_path = self.data_dir / "bilibili_login.json"  # her Bilibili account (never logged, not in git)
+        self._warned: set[str] = set()
         self.rng = random.Random()
         self.owner_last_seen: datetime | None = None
         self._lock = asyncio.Lock()
@@ -147,7 +158,8 @@ class SurfingTheWeb(star.Star):
                         f"出门{int(self.cfg.get('outings_per_day', 3))}次左右，刷几个常去的站点，看到的会记下来"))
         if self.cfg.get("search_sources", DEFAULT_SEARCHES):
             out.append(("surfing-the-web:wish", "记下想上网查的",
-                        f"和{owner}私聊时用 surf_wish 记下想查的话题，下次出门先去B站搜"))
+                        f"和{owner}私聊时用 surf_wish 记下想查的话题，下次出门先去搜（B站"
+                        + ("和网页" if self._deepseek_key() else "") + "）"))
         per_day, cooldown = self._self_rules()
         if per_day > 0:
             out.append(("surfing-the-web:now", "想去就马上上网",
@@ -172,7 +184,8 @@ class SurfingTheWeb(star.Star):
 
         sink = self._sink()
         buffered = BufferSink()  # memory-core writes block: they run in a thread afterwards
-        searches = build_searches(list(self.cfg.get("search_sources", DEFAULT_SEARCHES)))
+        searches = build_searches(list(self.cfg.get("search_sources", DEFAULT_SEARCHES)), self._deepseek_key())
+        reader = self._reader()
         async with self._lock:
             from_wishes = not topic
             wish = (topic or self.state.take_wish()) if searches else ""
@@ -181,7 +194,7 @@ class SurfingTheWeb(star.Star):
                                   per_source=int(self.cfg.get("items_per_source", 8)),
                                   max_picks=int(self.cfg.get("max_picks", 3)), blocked=self._blocked(),
                                   wish=wish, searches=searches, per_search=int(self.cfg.get("results_per_search", 6)),
-                                  rng=self.rng)
+                                  rng=self.rng, reader=reader)
             search_keys = {s.key for s in searches}
             failed = [e for e in outing.errors if e.split(":", 1)[0] in search_keys]
             if wish and from_wishes and not outing.found and len(failed) == len(searches):
@@ -195,7 +208,73 @@ class SurfingTheWeb(star.Star):
                     + (f"; looked up {outing.wish!r}: {outing.found} found" if outing.wish else "")
                     + f"): {outing.shown} shown, {len(outing.seen)} opened"
                     + (f", errors: {outing.errors}" if outing.errors else ""))
+        if reader.bili is not None and reader.bili.login_expired:
+            self._warn_once("bili-expired", "[surfing] the Bilibili login has expired: send /surf_bili_login again")
         return outing
+
+    # ---------------------------------------------------------------- reading what she opens
+
+    def _warn_once(self, key: str, text: str) -> None:
+        if key not in self._warned:
+            self._warned.add(key)
+            logger.warning(text)
+
+    def _deepseek_key(self) -> str:
+        """For web search and reading pages: the plugin's own key, else the key of AstrBot's DeepSeek provider.
+        Never logged."""
+        own = str(self.cfg.get("deepseek_api_key") or "").strip()
+        if own:
+            return own
+        try:
+            sources = self.context.get_config().get("provider_sources", []) or []
+        except Exception:  # noqa: BLE001
+            sources = []
+        for src in sources:
+            if "api.deepseek.com" in str(src.get("api_base") or "") and src.get("enable", True):
+                keys = src.get("key") or []
+                keys = [keys] if isinstance(keys, str) else keys
+                for k in keys:
+                    if str(k).strip():
+                        return str(k).strip()
+        return ""
+
+    def _viewer(self):
+        """The vision model that looks at video frames: vision_provider_id, else the first provider that takes
+        images. None: no frames."""
+        if not self.cfg.get("video_frames", True):
+            return None
+        pid = str(self.cfg.get("vision_provider_id") or "").strip()
+        provider = self.context.get_provider_by_id(pid) if pid else None
+        if provider is None and not pid:
+            for p in self.context.get_all_providers():
+                if "image" in ((getattr(p, "provider_config", None) or {}).get("modalities") or []):
+                    provider = p
+                    break
+        if provider is None:
+            self._warn_once("no-vision", "[surfing] no vision model: videos without subtitles are not looked at")
+            return None
+        timeout = float(self.cfg.get("vision_timeout", 45))
+
+        async def see(jpeg: bytes, prompt: str) -> str:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as fh:
+                fh.write(jpeg)
+                path = fh.name
+            try:
+                resp = await asyncio.wait_for(provider.text_chat(prompt=prompt, image_urls=[path]), timeout)
+                return resp.completion_text or ""
+            finally:
+                Path(path).unlink(missing_ok=True)
+
+        return see
+
+    def _reader(self) -> Reader:
+        key = self._deepseek_key()
+        pages = PageReader(key) if key and self.cfg.get("read_pages", True) else None
+        bili = None
+        if self.cfg.get("read_videos", True):
+            bili = BiliReader(load_login(self.login_path), self._viewer(),
+                              max_looks=int(self.cfg.get("frames_videos_per_outing", 2)))
+        return Reader(bili, pages)
 
     async def _roll_day(self, now: datetime) -> None:
         """A new day: plan today's outings, and her own outings start again from zero."""
@@ -311,7 +390,7 @@ class SurfingTheWeb(star.Star):
     @filter.llm_tool(name="surf_wish")
     async def tool_wish(self, event: AstrMessageEvent, topic: str, reason: str = ""):
         """Note something you want to look up online; next time you go out on your own you search it first
-        (Bilibili search). Use public topic words only, e.g. a game, a show or a piece of news; never anyone's
+        (Bilibili and web search). Use public topic words only, e.g. a game, a show or a piece of news; never anyone's
         name, address, workplace or other personal details.
 
         Args:
@@ -379,3 +458,78 @@ class SurfingTheWeb(star.Star):
                      + (f"，搜「{last['wish']}」{last.get('found', 0)} 条" if last.get("wish") else "")) if last else ""
         yield event.plain_result(f"今天的计划：{plan}\n想找的：{wishes}{last_line}\n\n最近看过：\n"
                                  + ("\n".join(recent) or "（还没有）"))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("surf_bili_login")
+    async def cmd_bili_login(self, event: AstrMessageEvent):
+        """给她登录一个B站账号（用来读字幕，建议用小号）：发出二维码，用手机B站扫码确认"""
+        if self._console_denied(event):
+            return
+        png = self.data_dir / "bilibili_qr.png"
+        try:
+            import qrcode  # noqa: PLC0415 - comes with AstrBot
+
+            async with SafeFetcher(set(LOGIN_HOSTS)) as f:
+                url, key = await qr_start(f)
+            png.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(lambda: qrcode.make(url).save(png))
+        except Exception as exc:  # noqa: BLE001
+            yield event.plain_result(f"生成二维码失败：{exc}")
+            return
+        yield event.image_result(str(png))
+        yield event.plain_result("用手机B站扫这个码，在手机上点确认（建议用小号；她只用它读字幕，不发东西）。"
+                                 "三分钟内有效。")
+        try:
+            said_scanned = False
+            async with SafeFetcher(set(LOGIN_HOSTS)) as f:
+                for _ in range(90):
+                    await asyncio.sleep(2)
+                    code, cookies = await qr_poll(f, key)
+                    if code == QR_DONE and cookies:
+                        await asyncio.to_thread(save_login, self.login_path, cookies)
+                        name = await whoami(f, cookies)
+                        logger.info("[surfing] Bilibili login saved")
+                        yield event.plain_result(f"登录好了{'：' + name if name else ''}。以后她点开B站视频会读字幕。")
+                        return
+                    if code == QR_SCANNED and not said_scanned:
+                        said_scanned = True
+                        yield event.plain_result("扫到了，在手机上点确认")
+                    if code == QR_EXPIRED:
+                        yield event.plain_result("二维码过期了，再发一次 /surf_bili_login")
+                        return
+            yield event.plain_result("等太久了，没登录上，再发一次 /surf_bili_login")
+        except Exception as exc:  # noqa: BLE001
+            yield event.plain_result(f"登录没成功：{exc}")
+        finally:
+            png.unlink(missing_ok=True)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("surf_bili_status")
+    async def cmd_bili_status(self, event: AstrMessageEvent):
+        """她的B站账号还登录着吗，网页搜索和看画面能不能用"""
+        if self._console_denied(event):
+            return
+        login = load_login(self.login_path)
+        name = ""
+        if login:
+            try:
+                async with SafeFetcher(set(LOGIN_HOSTS)) as f:
+                    name = await whoami(f, login)
+            except Exception as exc:  # noqa: BLE001
+                name = f"（查不了：{exc}）"
+        if not login:
+            bili = "B站：没登录（读不了字幕），发 /surf_bili_login"
+        else:
+            bili = f"B站：登录着 {name}" if name else "B站：登录过期了，再发 /surf_bili_login"
+        web = "网页搜索和读网页：可以（DeepSeek）" if self._deepseek_key() else "网页搜索和读网页：没有 DeepSeek key"
+        frames = "没字幕时看画面：" + ("可以" if self._viewer() else "没有能看图的模型")
+        yield event.plain_result("\n".join((bili, web, frames)))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("surf_bili_logout")
+    async def cmd_bili_logout(self, event: AstrMessageEvent):
+        """删掉她保存的B站登录"""
+        if self._console_denied(event):
+            return
+        self.login_path.unlink(missing_ok=True)
+        yield event.plain_result("删掉了。之后没字幕的视频她只能看画面。")

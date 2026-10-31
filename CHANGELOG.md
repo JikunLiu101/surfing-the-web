@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-31)
+
+- Opening something now reads it. Bilibili videos: their subtitles, with a Bilibili account the owner logs in by
+  scanning a QR code (`/surf_bili_login`, `/surf_bili_status`, `/surf_bili_logout`); without subtitles, three
+  frames from the progress-bar preview sheets, described by a vision model (`video_frames`, `vision_provider_id`,
+  `frames_videos_per_outing`). Search results and items whose list says little: the page text through DeepSeek's
+  Fetch API (`read_pages`). When nothing could be read she is told so (no more "an empty page").
+- `web_search` is DeepSeek's Search API instead of DuckDuckGo, and is on by default. Search and Fetch use the key
+  of AstrBot's DeepSeek provider, or `deepseek_api_key`.
+- `SafeFetcher` can read bytes and POST JSON; credentials are dropped when a redirect leaves the host. Bilibili
+  requests carry a device id (buvid3) handed out by Bilibili, without which video pages answer 412.
+- The picked items are opened at the same time; content that turns out to contain a blocked word is closed.
 
 - Prompt caching: what she saw lately (`<surfing_the_web>`) goes with the user's message instead of the system
   prompt, and is taken out of the earlier messages in the history (`strip_blocks`), so the system prompt and the

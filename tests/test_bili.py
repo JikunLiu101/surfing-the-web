@@ -1,0 +1,162 @@
+import asyncio
+import io
+import json
+
+import httpx
+import pytest
+
+from surfing_the_web.bili import (BiliReader, choose_subtitle, load_login, login_from_url, pick_tiles, pvdata_times,
+                                  save_login, subtitle_text)
+from surfing_the_web.sources import Item, SafeFetcher
+
+LOGIN = {"SESSDATA": "s3cret", "bili_jct": "jct", "DedeUserID": "42"}
+
+
+def video(bvid="BV1xx"):
+    return Item("bilibili_popular", "B站", "冻河 技能演示", f"https://www.bilibili.com/video/{bvid}",
+                meta={"bvid": bvid})
+
+
+def sheet_png() -> bytes:
+    """A 2x2 preview sheet: tiles coloured red, green, blue, white."""
+    from PIL import Image
+
+    img = Image.new("RGB", (64, 36))
+    for i, colour in enumerate(("red", "green", "blue", "white")):
+        img.paste(Image.new("RGB", (32, 18), colour), ((i % 2) * 32, (i // 2) * 18))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class Bili:
+    """A fake Bilibili: what is asked, and what it answers."""
+
+    def __init__(self, *, subtitles=True, player_bvid="BV1xx", logged_in=True,
+                 sub_lines=("大家好", "今天讲一讲冻河这个干员的技能")):
+        self.asked = []
+        self.subtitles, self.player_bvid, self.logged_in, self.sub_lines = subtitles, player_bvid, logged_in, sub_lines
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        self.asked.append(req)
+        path = req.url.path
+        if path == "/x/frontend/finger/spi":
+            return httpx.Response(200, json={"code": 0, "data": {"b_3": "dev3", "b_4": "dev4"}})
+        if path == "/x/web-interface/view":
+            return httpx.Response(200, json={"code": 0, "data": {"aid": 7, "cid": 8, "duration": 60, "desc": "六星辅助",
+                                                                  "pages": [{"cid": 8, "duration": 60}]}})
+        if path == "/x/player/v2":
+            subs = [{"lan": "en", "subtitle_url": "//aisubtitle.hdslb.com/en.json"},
+                    {"lan": "ai-zh", "subtitle_url": "//aisubtitle.hdslb.com/zh.json"}] if self.subtitles else []
+            return httpx.Response(200, json={"code": 0, "data": {
+                "bvid": self.player_bvid, "cid": 8, "login_mid": 42 if self.logged_in else 0,
+                "subtitle": {"subtitles": subs}}})
+        if req.url.host == "aisubtitle.hdslb.com":
+            body = [{"content": "字幕 by 某某"}] + [{"content": x} for x in self.sub_lines]
+            return httpx.Response(200, json={"body": body})
+        if path == "/x/player/videoshot":
+            return httpx.Response(200, json={"code": 0, "data": {
+                "img_x_len": 2, "img_y_len": 2, "image": ["//bimp.hdslb.com/sheet-0001.jpg"], "index": [0, 10, 20, 30]}})
+        if req.url.host == "bimp.hdslb.com":
+            return httpx.Response(200, content=sheet_png())
+        return httpx.Response(404)
+
+
+def read(bili: Bili, login=LOGIN, see=None, item=None, **kw):
+    async def go():
+        reader = BiliReader(login, see, **kw)
+        async with SafeFetcher(set(reader.hosts), transport=httpx.MockTransport(bili)) as f:
+            return reader, await reader.read(f, item or video())
+    return asyncio.run(go())
+
+
+def test_reads_the_subtitles_with_the_login():
+    bili = Bili()
+    reader, it = read(bili)
+    assert it.meta["read"] == "subtitles"
+    assert it.body == "简介：六星辅助\n视频里说的（自动识别的字幕，可能有错字）：\n大家好\n今天讲一讲冻河这个干员的技能"
+    player = next(r for r in bili.asked if r.url.path == "/x/player/v2")
+    assert "SESSDATA=s3cret" in player.headers["cookie"] and "buvid3=dev3" in player.headers["cookie"]
+    assert player.url.params["aid"] == "7" and player.url.params["cid"] == "8"
+    # the login only goes to the player API; the subtitle file is fetched without it
+    for r in bili.asked:
+        if r.url.path != "/x/player/v2":
+            assert "SESSDATA" not in r.headers.get("cookie", "")
+    sub = next(r for r in bili.asked if r.url.host == "aisubtitle.hdslb.com")
+    assert sub.url.path == "/zh.json"  # AI Chinese first
+
+
+def test_another_videos_subtitles_are_not_used():
+    _, it = read(Bili(player_bvid="BV9zz"))
+    assert it.meta["read"] == "title" and "简介" in it.body
+
+
+def test_expired_login_is_noticed():
+    reader, it = read(Bili(logged_in=False))
+    assert reader.login_expired and it.meta["read"] == "title"
+
+
+def test_credit_only_subtitles_mean_no_speech():
+    _, it = read(Bili(sub_lines=("♪",)))
+    assert it.meta["read"] == "title"
+    assert it.meta["note"] == "没读到这个视频的字幕，画面也没看成，只看到了标题和简介"
+
+
+def test_without_subtitles_she_looks_at_frames():
+    pytest.importorskip("PIL")
+    seen = []
+
+    async def see(jpeg, prompt):
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(jpeg))
+        seen.append((img.size, prompt, img.getpixel((10, 10))))
+        return "一个人  在雪地里\n放技能"
+
+    bili = Bili(subtitles=False)
+    _, it = read(bili, see=see)
+    assert it.meta["read"] == "frames"
+    assert it.body == "简介：六星辅助\n这个视频没有字幕，你看了里面几个画面：一个人 在雪地里 放技能"
+    (size, prompt, first), = seen
+    assert size == (3 * 480 + 16, 270) and "《冻河 技能演示》" in prompt and "3 个画面" in prompt
+    assert first[0] > 200 and first[1] < 60  # tile 0 (red) first: frames are in time order
+    shot = next(r for r in bili.asked if r.url.path == "/x/player/videoshot")
+    assert "SESSDATA" not in shot.headers.get("cookie", "")
+
+
+def test_without_login_no_subtitles_are_asked_for():
+    bili = Bili()
+    _, it = read(bili, login={})
+    assert not any(r.url.path == "/x/player/v2" for r in bili.asked) and it.meta["read"] == "title"
+
+
+def test_looks_are_limited_per_outing():
+    calls = []
+
+    async def see(jpeg, prompt):
+        calls.append(1)
+        return "画面"
+
+    async def go():
+        reader = BiliReader({}, see, max_looks=1)
+        async with SafeFetcher(set(reader.hosts), transport=httpx.MockTransport(Bili(subtitles=False))) as f:
+            return [await reader.read(f, video(b)) for b in ("BV1xx", "BV2yy")]
+    first, second = asyncio.run(go())
+    assert len(calls) == 1 and first.meta["read"] == "frames" and second.meta["read"] == "title"
+
+
+def test_helpers(tmp_path):
+    assert choose_subtitle([{"lan": "en", "subtitle_url": "a"}, {"lan": "zh-CN", "subtitle_url": "b"}])["lan"] == "zh-CN"
+    assert choose_subtitle([{"lan": "ai-zh", "subtitle_url": ""}]) is None
+    assert subtitle_text({"body": [{"content": "好"}, {"content": "好"}]}) == ""
+    assert pick_tiles([0, 10, 20, 30, 40, 50], 6, 3) == [1, 2, 4]
+    assert pick_tiles([0, 0, 0], 3, 3) == [0]
+    assert pick_tiles([], 9, 3) == [1, 4, 7]
+    assert pvdata_times(b"\x00\x00\x00\x05") == [0.0, 5.0] and pvdata_times(b"\x00") == []
+    url = "https://www.bilibili.com/?DedeUserID=42&SESSDATA=s3cret&bili_jct=jct&gourl=x"
+    assert login_from_url(url) == {"SESSDATA": "s3cret", "bili_jct": "jct", "DedeUserID": "42"}
+    assert login_from_url("https://www.bilibili.com/?a=1") == {}
+    path = tmp_path / "login.json"
+    assert load_login(path) == {}
+    save_login(path, {**LOGIN, "other": "x"})
+    assert load_login(path) == LOGIN and "other" not in json.loads(path.read_text(encoding="utf-8"))

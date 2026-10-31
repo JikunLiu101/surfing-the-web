@@ -80,14 +80,56 @@
     "description": "Search sites (for what she wants to look up)",
     "type": "list",
     "default": [
-      "bilibili_search"
+      "bilibili_search",
+      "web_search"
     ],
-    "hint": "bilibili_search; optional web_search (DuckDuckGo titles and snippets, often too short to be interesting). Only the topic words are sent. Empty: no searching."
+    "hint": "bilibili_search; web_search (DeepSeek Search: pages from the whole web, opened with DeepSeek Fetch; needs a DeepSeek key, $0.75 per 1000 calls). Only the topic words are sent. Empty: no searching."
   },
   "results_per_search": {
     "description": "Results shown per search site",
     "type": "int",
     "default": 6
+  },
+  "read_pages": {
+    "description": "Read the pages she opens",
+    "type": "bool",
+    "default": true,
+    "hint": "Search results, and items whose list says little (Hacker News, GitHub...), are read through DeepSeek Fetch (the page is downloaded by DeepSeek, not by this machine). At most max_picks calls per outing."
+  },
+  "deepseek_api_key": {
+    "description": "DeepSeek API key for search and reading pages (optional)",
+    "type": "string",
+    "default": "",
+    "hint": "Empty: the key of AstrBot's DeepSeek provider (api.deepseek.com) is used."
+  },
+  "read_videos": {
+    "description": "Watch the Bilibili videos she opens",
+    "type": "bool",
+    "default": true,
+    "hint": "Reads the subtitles (needs a Bilibili account: send /surf_bili_login and scan the QR code; a second account is best). Without subtitles: a few frames for the vision model."
+  },
+  "video_frames": {
+    "description": "Look at frames when a video has no subtitles",
+    "type": "bool",
+    "default": true,
+    "hint": "Three frames from Bilibili's preview sheets (no video is downloaded), described by the vision model."
+  },
+  "vision_provider_id": {
+    "description": "Vision model provider ID",
+    "type": "string",
+    "default": "",
+    "hint": "Empty: the first provider whose modalities include image."
+  },
+  "vision_timeout": {
+    "description": "Vision model timeout (seconds)",
+    "type": "float",
+    "default": 45
+  },
+  "frames_videos_per_outing": {
+    "description": "Videos looked at with the vision model per outing",
+    "type": "int",
+    "default": 2,
+    "hint": "A local vision model is slow; the others keep their title and description."
   },
   "blocked_keywords": {
     "description": "Blocked words",

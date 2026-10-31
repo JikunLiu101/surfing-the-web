@@ -1,8 +1,10 @@
 """Where the being can go, and how pages are fetched safely.
 
-Every request is a plain GET to an allow-listed host, without cookies or any information about the owner;
-redirects are followed only within the allow-list; responses are size-capped. Page content is data, never
-instructions: it is only ever shown to the model as something the being saw.
+Every request goes to an allow-listed host, without any information about the owner; nothing a site sets is
+kept. The only credentials ever sent are the ones a reader passes on purpose (the Bilibili login for subtitles,
+the DeepSeek key for search), and they are dropped when a redirect leaves the host. Redirects are followed only
+within the allow-list; responses are size-capped. Page content is data, never instructions: it is only ever
+shown to the model as something the being saw.
 """
 
 from __future__ import annotations
@@ -49,7 +51,9 @@ def host_allowed(url: str, hosts: set[str]) -> bool:
 
 
 class SafeFetcher:
-    """GET-only HTTP client limited to `hosts`. One fetcher per outing; it keeps no cookies."""
+    """HTTP client limited to `hosts`. One fetcher per outing; it keeps no cookies."""
+
+    SECRET_HEADERS = ("cookie", "authorization")
 
     def __init__(self, hosts: set[str], *, timeout: float = 15, max_bytes: int = 2_000_000,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
@@ -64,29 +68,60 @@ class SafeFetcher:
     async def __aexit__(self, *exc) -> None:
         await self._client.aclose()
 
-    async def get_text(self, url: str, *, params: dict | None = None, headers: dict | None = None) -> str:
+    async def get_bytes(self, url: str, *, params: dict | None = None, headers: dict | None = None,
+                        max_bytes: int | None = None, timeout: float | None = None) -> tuple[bytes, str]:
+        """The body and its text encoding (or "")."""
         if params:
             url = str(httpx.URL(url, params=params))
+        headers = dict(headers or {})
+        host = urlsplit(url).hostname
+        limit = max_bytes or self.max_bytes
         for _ in range(MAX_REDIRECTS + 1):
             if not host_allowed(url, self.hosts):
                 raise BlockedURL(url)
+            if urlsplit(url).hostname != host:  # a login or key never follows a redirect to another host
+                headers = {k: v for k, v in headers.items() if k.lower() not in self.SECRET_HEADERS}
             self._client.cookies.clear()  # nothing a site sets is ever sent back
-            async with self._client.stream("GET", url, headers=headers) as resp:
+            async with self._client.stream("GET", url, headers=headers,
+                                           timeout=timeout or httpx.USE_CLIENT_DEFAULT) as resp:
                 if resp.is_redirect:
                     url = urljoin(url, resp.headers.get("location", ""))
                     continue
                 resp.raise_for_status()
-                chunks, size = [], 0
-                async for chunk in resp.aiter_bytes():
-                    size += len(chunk)
-                    if size > self.max_bytes:
-                        raise ValueError(f"response larger than {self.max_bytes} bytes: {url}")
-                    chunks.append(chunk)
-                return b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
+                return await self._read(resp, url, limit), resp.encoding or ""
         raise ValueError(f"too many redirects: {url}")
+
+    async def get_text(self, url: str, *, params: dict | None = None, headers: dict | None = None) -> str:
+        body, encoding = await self.get_bytes(url, params=params, headers=headers)
+        return body.decode(encoding or "utf-8", errors="replace")
 
     async def get_json(self, url: str, **kw):
         return json.loads(await self.get_text(url, **kw))
+
+    async def post_json(self, url: str, payload: dict, *, headers: dict | None = None,
+                        timeout: float | None = None):
+        """POST a JSON body to an allow-listed API and read the JSON answer. Redirects are not followed."""
+        if not host_allowed(url, self.hosts):
+            raise BlockedURL(url)
+        self._client.cookies.clear()
+        async with self._client.stream("POST", url, json=payload, headers=headers,
+                                       timeout=timeout or httpx.USE_CLIENT_DEFAULT) as resp:
+            if resp.is_redirect:
+                raise ValueError(f"unexpected redirect from {url}")
+            body = await self._read(resp, url, self.max_bytes)
+            if resp.is_error:
+                raise ValueError(f"HTTP {resp.status_code} from {url}: {clip(body.decode('utf-8', 'replace'), 200)}")
+            return json.loads(body.decode("utf-8", errors="replace"))
+
+    @staticmethod
+    async def _read(resp: httpx.Response, url: str, limit: int) -> bytes:
+        chunks, size = [], 0
+        async for chunk in resp.aiter_bytes():
+            size += len(chunk)
+            if size > limit:
+                raise ValueError(f"response larger than {limit} bytes: {url}")
+            chunks.append(chunk)
+        return b"".join(chunks)
 
 
 # ------------------------------------------------------------------ text helpers
@@ -373,41 +408,77 @@ def parse_bilibili_search(data: dict) -> list[Item]:
     return items
 
 
-class WebSearch(SearchSource):
-    """DuckDuckGo's HTML results: titles and snippets only (result pages are not opened)."""
+DEEPSEEK_API = "https://api.deepseek.com/v1/tools"
 
-    key, site, hosts = "web_search", "网页搜索", ("html.duckduckgo.com",)
+
+def _deepseek_headers(api_key: str) -> dict:
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+
+class DeepSeekSearch(SearchSource):
+    """DeepSeek's Search API (https://api-docs.deepseek.com/guides/search/): pages from the whole web, each with
+    a summary of about 600-800 characters. Opening one reads the page through DeepSeek's Fetch API. Paid per
+    successful call (failed and empty ones are free)."""
+
+    key, site, hosts = "web_search", "网页", ("api.deepseek.com",)
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
 
     async def search(self, f, query, limit):
-        html = await f.get_text("https://html.duckduckgo.com/html/", params={"q": query, "kl": "cn-zh"})
-        return parse_ddg(html)[:limit]
+        data = await f.post_json(f"{DEEPSEEK_API}/search", {"query": query[:128], "count": max(1, min(50, limit))},
+                                 headers=_deepseek_headers(self.api_key), timeout=30)
+        return parse_deepseek_search(data)[:limit]
 
 
-def parse_ddg(html: str) -> list[Item]:
-    from urllib.parse import parse_qs  # noqa: PLC0415
-
-    from bs4 import BeautifulSoup  # noqa: PLC0415
-
-    soup = BeautifulSoup(html, "html.parser")
+def parse_deepseek_search(data: dict) -> list[Item]:
     items = []
-    for res in soup.select("div.result"):
-        a = res.select_one("a.result__a")
-        if not a or not a.get("href") or "result--ad" in (res.get("class") or []):
+    for r in (data or {}).get("results") or []:
+        url, title = r.get("url") or "", clip(_WS.sub(" ", r.get("title") or ""), 100)
+        if not title or not url.startswith(("http://", "https://")):
             continue
-        href = a["href"]
-        if "uddg=" in href:  # //duckduckgo.com/l/?uddg=<real url>
-            href = parse_qs(urlsplit(href if "://" in href else "https:" + href).query).get("uddg", [href])[0]
-        if not href.startswith(("http://", "https://")):
-            continue
-        snippet = res.select_one(".result__snippet")
-        items.append(Item("web_search", "网页搜索", html_to_text(str(a), 100, sep=""), href,
-                          summary=urlsplit(href).hostname or "",
-                          body=html_to_text(str(snippet), 400) if snippet else ""))
+        when = str(r.get("date") or "")[:10]
+        bits = [r.get("site_name") or urlsplit(url).hostname or "", f"发布 {when}" if when else ""]
+        items.append(Item("web_search", "网页", title, url, summary=" · ".join(b for b in bits if b),
+                          body=clip(r.get("summary") or r.get("snippet") or "", 800), meta={"read_page": True}))
     return items
 
 
-SEARCH_BUILTIN: dict[str, SearchSource] = {s.key: s for s in (BilibiliSearch(), WebSearch())}
+class PageReader:
+    """Reads a page through DeepSeek's Fetch API: DeepSeek downloads it and returns it as Markdown, so the page
+    itself is never requested from here (any host works, nothing about this machine reaches it)."""
+
+    hosts = ("api.deepseek.com",)
+
+    def __init__(self, api_key: str, limit: int = 3000) -> None:
+        self.api_key, self.limit = api_key, limit
+
+    async def read(self, f: SafeFetcher, url: str) -> str:
+        data = await f.post_json(f"{DEEPSEEK_API}/fetch", {"url": url}, headers=_deepseek_headers(self.api_key),
+                                 timeout=40)
+        return clip(page_text(data.get("content") or ""), self.limit)
 
 
-def build_searches(enabled: list[str]) -> list[SearchSource]:
-    return [SEARCH_BUILTIN[k] for k in enabled if k in SEARCH_BUILTIN]
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def page_text(markdown: str) -> str:
+    """Markdown from Fetch, made lighter to read: images dropped, links kept as their text, blank lines folded."""
+    text = _MD_IMAGE.sub("", markdown or "")
+    text = _MD_LINK.sub(r"\1", text)
+    return re.sub(r"\n\s*\n+", "\n", text).strip()
+
+
+SEARCH_BUILTIN: dict[str, SearchSource] = {s.key: s for s in (BilibiliSearch(),)}
+
+
+def build_searches(enabled: list[str], deepseek_key: str = "") -> list[SearchSource]:
+    out = []
+    for k in enabled:
+        if k == "web_search":
+            if deepseek_key:
+                out.append(DeepSeekSearch(deepseek_key))
+        elif k in SEARCH_BUILTIN:
+            out.append(SEARCH_BUILTIN[k])
+    return out
