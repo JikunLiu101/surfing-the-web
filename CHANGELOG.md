@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-31)
 
 - When the owner asks the persona to go online, its own limits no longer stop it: `surf_now(..., asked=true)` is
   accepted when the owner's message in this private chat talks about going online, does not use up
@@ -13,8 +13,6 @@
   sends it); if neither has it, the command says so and logs which names came back (never the values).
 - Fix: videos opened at the same time each asked for a device id, and all but the first went without one and got
   412 from Bilibili. They now wait for one shared id.
-
-## 0.4.0 (2026-10-31)
 
 - Opening something now reads it. Bilibili videos: their subtitles, with a Bilibili account the owner logs in by
   scanning a QR code (`/surf_bili_login`, `/surf_bili_status`, `/surf_bili_logout`); without subtitles, three
