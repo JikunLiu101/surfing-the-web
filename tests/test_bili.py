@@ -160,3 +160,59 @@ def test_helpers(tmp_path):
     assert load_login(path) == {}
     save_login(path, {**LOGIN, "other": "x"})
     assert load_login(path) == LOGIN and "other" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+# ------------------------------------------------------------------ the QR login (2026-10-31: "expired" right after
+# confirming: Bilibili sent the session in Set-Cookie, not in data.url, and the used-up key then said 86038)
+
+
+def _poll(answer: httpx.Response):
+    from surfing_the_web.bili import LOGIN_HOSTS, qr_poll
+
+    async def go():
+        async with SafeFetcher(set(LOGIN_HOSTS), transport=httpx.MockTransport(lambda req: answer)) as f:
+            out = await qr_poll(f, "k")
+            leftover = dict(f._client.cookies)
+        return out, leftover
+    return asyncio.run(go())
+
+
+def test_qr_login_from_set_cookie():
+    answer = httpx.Response(200, json={"code": 0, "data": {"code": 0, "url": "", "refresh_token": "r"}}, headers=[
+        ("set-cookie", "SESSDATA=abc%2C1790000000%2Cx1%2A51; Path=/; Domain=bilibili.com; HttpOnly"),
+        ("set-cookie", "bili_jct=jct; Path=/; Domain=bilibili.com"),
+        ("set-cookie", "DedeUserID=42; Path=/; Domain=bilibili.com"),
+        ("set-cookie", "sid=other; Path=/; Domain=bilibili.com"),
+    ])
+    (code, cookies, seen), leftover = _poll(answer)
+    assert code == 0
+    assert cookies == {"SESSDATA": "abc%2C1790000000%2Cx1%2A51", "bili_jct": "jct", "DedeUserID": "42"}
+    assert leftover == {}  # the fetcher keeps nothing
+    assert "abc" not in seen and "SESSDATA" in seen  # names for the log, never the values
+
+
+def test_qr_login_from_url_is_kept_as_a_browser_sends_it():
+    url = ("https://passport.biligame.com/x/passport-login/web/crossDomain?DedeUserID=42&DedeUserID__ckMd5=md5"
+           "&SESSDATA=abc%2C1790000000%2Cx1*51&bili_jct=jct&gourl=https%3A%2F%2Fwww.bilibili.com")
+    (code, cookies, _), _ = _poll(httpx.Response(200, json={"code": 0, "data": {"code": 0, "url": url}}))
+    assert code == 0 and cookies["SESSDATA"] == "abc%2C1790000000%2Cx1%2A51" and cookies["DedeUserID__ckMd5"] == "md5"
+
+
+def test_qr_confirmed_without_a_login_says_so():
+    (code, cookies, seen), _ = _poll(httpx.Response(200, json={"code": 0, "data": {"code": 0, "url": "https://x/?a=1"}}))
+    assert code == 0 and cookies == {} and "['a']" in seen
+    (code, cookies, seen), _ = _poll(httpx.Response(200, json={"code": 0, "data": {"code": 86090}}))
+    assert (code, cookies, seen) == (86090, {}, "")
+
+
+def test_videos_opened_together_share_one_device_id():
+    bili = Bili()
+
+    async def go():
+        reader = BiliReader({}, None)
+        async with SafeFetcher(set(reader.hosts), transport=httpx.MockTransport(bili)) as f:
+            return await asyncio.gather(reader.read(f, video("BV1aa")), reader.read(f, video("BV1bb")))
+    asyncio.run(go())
+    assert sum(1 for r in bili.asked if r.url.path == "/x/frontend/finger/spi") == 1
+    views = [r for r in bili.asked if r.url.path == "/x/web-interface/view"]
+    assert len(views) == 2 and all("buvid3=dev3" in r.headers.get("cookie", "") for r in views)

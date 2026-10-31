@@ -98,6 +98,26 @@ class SafeFetcher:
     async def get_json(self, url: str, **kw):
         return json.loads(await self.get_text(url, **kw))
 
+    async def get_json_with_cookies(self, url: str, *, params: dict | None = None,
+                                    headers: dict | None = None) -> tuple[object, dict[str, str]]:
+        """GET an allow-listed JSON API and also return the cookies its answer sets (a login handing out the
+        session). Redirects are not followed; the fetcher itself still keeps none of these cookies."""
+        if params:
+            url = str(httpx.URL(url, params=params))
+        if not host_allowed(url, self.hosts):
+            raise BlockedURL(url)
+        self._client.cookies.clear()
+        try:
+            async with self._client.stream("GET", url, headers=headers) as resp:
+                if resp.is_redirect:
+                    raise ValueError(f"unexpected redirect from {url}")
+                resp.raise_for_status()
+                body = await self._read(resp, url, self.max_bytes)
+                cookies = {c.name: c.value for c in resp.cookies.jar}
+        finally:
+            self._client.cookies.clear()
+        return json.loads(body.decode(resp.encoding or "utf-8", errors="replace")), cookies
+
     async def post_json(self, url: str, payload: dict, *, headers: dict | None = None,
                         timeout: float | None = None):
         """POST a JSON body to an allow-listed API and read the JSON answer. Redirects are not followed."""

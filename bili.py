@@ -12,6 +12,7 @@ who made it is not speech, frames come from x/player/videoshot.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -20,7 +21,7 @@ import struct
 import time
 from pathlib import Path
 from typing import Awaitable, Callable
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from .sources import Item, SafeFetcher, clip
 
@@ -88,9 +89,16 @@ def save_login(path: Path, cookies: dict) -> None:
 
 
 def login_from_url(url: str) -> dict:
-    """After a confirmed scan, the cookies come back as query parameters of a redirect URL."""
+    """After a confirmed scan, the cookies may come back as query parameters of a cross-domain URL. They are kept
+    the way a browser would send them (SESSDATA's commas and star percent-encoded)."""
     query = parse_qs(urlsplit(url or "").query)
-    out = {k: query[k][0] for k in LOGIN_KEYS if query.get(k)}
+    out = {k: quote(query[k][0], safe="") for k in LOGIN_KEYS if query.get(k)}
+    return out if out.get("SESSDATA") else {}
+
+
+def login_from_cookies(cookies: dict) -> dict:
+    """The login cookies Bilibili set on the confirmed poll (Set-Cookie)."""
+    out = {k: str(cookies[k]) for k in LOGIN_KEYS if cookies.get(k)}
     return out if out.get("SESSDATA") else {}
 
 
@@ -102,12 +110,23 @@ async def qr_start(f: SafeFetcher) -> tuple[str, str]:
     return data["data"]["url"], data["data"]["qrcode_key"]
 
 
-async def qr_poll(f: SafeFetcher, key: str) -> tuple[int, dict]:
-    """(QR_DONE / QR_WAITING / QR_SCANNED / QR_EXPIRED or another code, the cookies once done)."""
-    data = await f.get_json(f"{PASSPORT}/poll", params={"qrcode_key": key}, headers=REFERER)
+async def qr_poll(f: SafeFetcher, key: str) -> tuple[int, dict, str]:
+    """(QR_DONE / QR_WAITING / QR_SCANNED / QR_EXPIRED or another code, the cookies once done, and on QR_DONE
+    which cookie and URL parameter *names* came back, for the log; never the values).
+
+    A confirmed key is used up: polling it again answers "expired". So on QR_DONE the cookies must be taken from
+    this very answer, from its Set-Cookie headers (what Bilibili does now) or else from `data.url`."""
+    data, set_cookies = await f.get_json_with_cookies(f"{PASSPORT}/poll", params={"qrcode_key": key},
+                                                      headers=REFERER)
     d = data.get("data") or {}
     code = int(d.get("code", -1))
-    return code, (login_from_url(d.get("url") or "") if code == QR_DONE else {})
+    if code != QR_DONE:
+        return code, {}, ""
+    url = d.get("url") or ""
+    cookies = login_from_cookies(set_cookies) or login_from_url(url)
+    seen = (f"set-cookie {sorted(set_cookies)}, url parameters {sorted(parse_qs(urlsplit(url).query))}, "
+            f"data keys {sorted(d)}")
+    return code, cookies, seen
 
 
 def cookie_header(cookies: dict) -> str:
@@ -231,16 +250,23 @@ class BiliReader:
         self.vision_failures = 0  # of those, how many the vision model did not answer
         self.login_expired = False
         self._device: dict | None = None
+        self._device_lock: asyncio.Lock | None = None
 
     async def _device_cookies(self, f: SafeFetcher) -> dict:
-        """A device id (buvid3/buvid4), handed out by Bilibili to anyone: without it, video pages answer 412."""
+        """A device id (buvid3/buvid4), handed out by Bilibili to anyone: without it, video pages answer 412.
+        The videos of an outing are opened at the same time; they all wait for the one id."""
         if self._device is None:
-            self._device = {}
-            try:
-                d = (await f.get_json(f"{API}/x/frontend/finger/spi", headers=REFERER)).get("data") or {}
-                self._device = {k: v for k, v in (("buvid3", d.get("b_3")), ("buvid4", d.get("b_4"))) if v}
-            except Exception as exc:  # noqa: BLE001 - try without it
-                log.debug("no bilibili device id: %s", exc)
+            if self._device_lock is None:
+                self._device_lock = asyncio.Lock()
+            async with self._device_lock:
+                if self._device is None:
+                    device = {}
+                    try:
+                        d = (await f.get_json(f"{API}/x/frontend/finger/spi", headers=REFERER)).get("data") or {}
+                        device = {k: v for k, v in (("buvid3", d.get("b_3")), ("buvid4", d.get("b_4"))) if v}
+                    except Exception as exc:  # noqa: BLE001 - try without it
+                        log.warning("no bilibili device id (videos may answer 412): %s", exc)
+                    self._device = device
         return self._device
 
     async def _api(self, f: SafeFetcher, path: str, params: dict, *, logged_in: bool = False) -> dict:

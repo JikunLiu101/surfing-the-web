@@ -561,12 +561,19 @@ class SurfingTheWeb(star.Star):
             async with SafeFetcher(set(LOGIN_HOSTS)) as f:
                 for _ in range(90):
                     await asyncio.sleep(2)
-                    code, cookies = await qr_poll(f, key)
-                    if code == QR_DONE and cookies:
+                    code, cookies, seen = await qr_poll(f, key)
+                    if code == QR_DONE and not cookies:  # the key is used up: polling on would only say "expired"
+                        logger.warning(f"[surfing] bilibili confirmed the scan but sent no login; got {seen}")
+                        yield event.plain_result("手机上确认成功了，但B站没把登录信息发过来，所以没登上。"
+                                                 "把 AstrBot 日志里带 bilibili 的那行发给开发者看看。")
+                        return
+                    if code == QR_DONE:
                         await asyncio.to_thread(save_login, self.login_path, cookies)
                         name = await whoami(f, cookies)
-                        logger.info("[surfing] Bilibili login saved")
-                        yield event.plain_result(f"登录好了{'：' + name if name else ''}。以后她点开B站视频会读字幕。")
+                        logger.info("[surfing] Bilibili login saved" + (" (the login works)" if name else
+                                                                         f" (but nav does not see it logged in; got {seen})"))
+                        yield event.plain_result(f"登录好了{'：' + name if name else ''}。以后她点开B站视频会读字幕。"
+                                                 + ("" if name else "（不过查不到账号名，读字幕时如果不行再扫一次）"))
                         return
                     if code == QR_SCANNED and not said_scanned:
                         said_scanned = True

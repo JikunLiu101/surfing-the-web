@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Fix: the Bilibili QR login said "expired" right after the scan was confirmed. Bilibili now hands out the session
+  in the Set-Cookie headers of the confirming poll, not in `data.url`, and a confirmed key answers "expired" when
+  polled again. The login is now taken from Set-Cookie (or else from the URL, percent-encoded the way a browser
+  sends it); if neither has it, the command says so and logs which names came back (never the values).
+- Fix: videos opened at the same time each asked for a device id, and all but the first went without one and got
+  412 from Bilibili. They now wait for one shared id.
+
 ## 0.4.0 (2026-10-31)
 
 - Opening something now reads it. Bilibili videos: their subtitles, with a Bilibili account the owner logs in by
