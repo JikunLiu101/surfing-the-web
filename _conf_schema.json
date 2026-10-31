@@ -175,7 +175,7 @@
     "description": "Tell her what she saw lately",
     "type": "bool",
     "default": true,
-    "hint": "Adds a short note to the system prompt, so she can bring it up right away."
+    "hint": "Adds a short note after the user's message, so she can bring it up right away."
   },
   "recent_hours": {
     "description": "How far back that note goes (hours)",

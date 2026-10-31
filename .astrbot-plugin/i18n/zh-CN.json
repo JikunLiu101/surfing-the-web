@@ -1,0 +1,130 @@
+{
+  "metadata": {
+    "display_name": "上网逛逛 surfing-the-web",
+    "short_desc": "角色每天自己上网逛几次：挑感兴趣的点开读，写下感想，变成记忆",
+    "desc": "角色每天自己上网几次（B站、机核、IT之家、少数派、V2EX、GitHub、Hacker News……），用自己的眼光挑，点开读内容（网页正文、B站字幕或画面），写一两句感想。只读、站点白名单；可以接 memory-core 当长期记忆。"
+  },
+  "config": {
+    "enabled": {
+      "description": "定时出门",
+      "hint": "关掉后只有主人发 /surf 才出门。"
+    },
+    "outings_per_day": {
+      "description": "每天出门几次",
+      "hint": "在最早和最晚的钟点之间随机。"
+    },
+    "start_hour": {
+      "description": "最早几点"
+    },
+    "end_hour": {
+      "description": "最晚几点",
+      "hint": "这个钟点之后不出门（24 = 午夜）。"
+    },
+    "owner_idle_minutes": {
+      "description": "主人在聊天时先等（分钟）",
+      "hint": "主人安静这么久之后才出门。"
+    },
+    "self_outings_per_day": {
+      "description": "每天能自己决定出门几次",
+      "hint": "用 surf_now 工具，只在主人私聊里能用。定时出门和 /surf 不算。0：不能自己出门。"
+    },
+    "asked_outings_per_day": {
+      "description": "主人让去时每天最多多出去几次",
+      "hint": "主人在私聊里亲口让她去上网（这句话里说到了上网）时，surf_now 不受上一项和休息时间的限制，这是这类出门的上限。0：主人让去也不行，按她自己的次数来。"
+    },
+    "asked_min_gap_minutes": {
+      "description": "主人让去的两次之间至少隔（分钟）",
+      "hint": "防止死循环或重复调用让她一趟接一趟地出门。"
+    },
+    "self_cooldown_minutes": {
+      "description": "出门后休息（分钟）",
+      "hint": "这段时间里她不能自己再出门，定时出门也会等。每次按“时间浮动”变化。"
+    },
+    "timing_jitter": {
+      "description": "休息时间浮动多少",
+      "hint": "0.2：上下浮动 20%。0：准时。"
+    },
+    "sources": {
+      "description": "常去的站点",
+      "hint": "内置：bilibili_popular、bilibili_ranking、gcores、ithome、sspai、v2ex、github_trending、hackernews。"
+    },
+    "sources_per_outing": {
+      "description": "每次逛几个站点"
+    },
+    "items_per_source": {
+      "description": "每个站点看几条"
+    },
+    "max_picks": {
+      "description": "每次最多点开几条"
+    },
+    "search_sources": {
+      "description": "搜索用的站点（找她想找的）",
+      "hint": "bilibili_search；web_search（DeepSeek Search 搜全网，点开用 DeepSeek Fetch 读；需要 DeepSeek key，每 1000 次 0.75 美元）。只发出话题几个字。留空：不搜索。"
+    },
+    "results_per_search": {
+      "description": "每个搜索站点看几条结果"
+    },
+    "read_pages": {
+      "description": "点开网页读正文",
+      "hint": "搜索结果，以及列表上没什么内容的（Hacker News、GitHub……）用 DeepSeek Fetch 读正文（网页由 DeepSeek 下载，不是本机）。每次出门最多“点开几条”次。"
+    },
+    "deepseek_api_key": {
+      "description": "搜索和读网页用的 DeepSeek key（可选）",
+      "hint": "留空：用 AstrBot 里 DeepSeek 提供商（api.deepseek.com）的 key。"
+    },
+    "read_videos": {
+      "description": "看点开的B站视频",
+      "hint": "读字幕（需要B站账号：发 /surf_bili_login 扫码，建议用小号）。没字幕时截几个画面给视觉模型看。"
+    },
+    "video_frames": {
+      "description": "视频没字幕时看画面",
+      "hint": "从B站的进度条预览图里取 3 个画面（不下载视频），交给视觉模型描述。"
+    },
+    "vision_provider_id": {
+      "description": "视觉模型提供商 ID",
+      "hint": "留空：第一个模态里有 image 的提供商。"
+    },
+    "vision_timeout": {
+      "description": "视觉模型超时（秒）"
+    },
+    "frames_videos_per_outing": {
+      "description": "每次出门最多看几个视频的画面",
+      "hint": "本机视觉模型比较慢；其余的只看标题和简介。"
+    },
+    "blocked_keywords": {
+      "description": "屏蔽词",
+      "hint": "标题或内容里有这些词的，她永远看不到。不想让她看、不想让她聊的都加进来。"
+    },
+    "dailyhot_url": {
+      "description": "自建 DailyHotApi 地址（可选）",
+      "hint": "比如 http://127.0.0.1:6688——你自己运行的 DailyHotApi（github.com/imsyy/DailyHotApi）。留空：不用。"
+    },
+    "dailyhot_routes": {
+      "description": "DailyHotApi 的榜单",
+      "hint": "比如 zhihu、weibo、ngabbs、miyoushe。只在填了上一项时用。"
+    },
+    "inject_recent": {
+      "description": "告诉她最近看到了什么",
+      "hint": "在对方的消息后面附一小段，她就能马上提起。"
+    },
+    "recent_hours": {
+      "description": "往前看多少小时"
+    },
+    "owner_ids": {
+      "description": "主人的用户 ID",
+      "hint": "谁能用 /surf、/surf_log。留空：从 memory-core 插件读取。"
+    },
+    "owner_command_platforms": {
+      "description": "主人命令可用的平台",
+      "hint": "/surf 和 /surf_log 只对主人、只在私聊、只在这些平台有效。其他人得不到回应。"
+    },
+    "persona_prompt": {
+      "description": "人设（只在没装 memory-core 时用）",
+      "hint": "装了 memory-core 就用它的身份文档。留空：AstrBot 默认人设。"
+    },
+    "llm_provider_id": {
+      "description": "聊天模型提供商 ID",
+      "hint": "留空：AstrBot 当前用的那个。"
+    }
+  }
+}
