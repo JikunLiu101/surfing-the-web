@@ -36,6 +36,10 @@
       "description": "主人让去的两次之间至少隔（分钟）",
       "hint": "防止死循环或重复调用让她一趟接一趟地出门。"
     },
+    "surf_now_wait_seconds": {
+      "description": "surf_now 最多等这次出门多久（秒）",
+      "hint": "要比 AstrBot 的工具调用超时（默认 120 秒）短。超过了也不会白逛：出门照常进行，看到的照样记进记忆，只是先告诉她还在看。"
+    },
     "self_cooldown_minutes": {
       "description": "出门后休息（分钟）",
       "hint": "这段时间里她不能自己再出门，定时出门也会等。每次按“时间浮动”变化。"
@@ -85,7 +89,8 @@
       "hint": "留空：第一个模态里有 image 的提供商。"
     },
     "vision_timeout": {
-      "description": "视觉模型超时（秒）"
+      "description": "视觉模型超时（秒）",
+      "hint": "每张图单独算，从轮到它开始计时（画面一个一个看）。本机模型睡着了，唤醒要一分钟左右。"
     },
     "frames_videos_per_outing": {
       "description": "每次出门最多看几个视频的画面",

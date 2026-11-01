@@ -38,7 +38,7 @@ When the owner asks it to go ("go online!"), those limits do not apply: it calls
 which the plugin accepts only if the owner's message in this chat really talks about going online (going out,
 browsing, searching, looking something up, Bilibili, videos...), so the persona cannot just claim it was asked.
 Such outings do not use up its own ones; they have a ceiling of their own (`asked_outings_per_day`, default 10)
-and at least `asked_min_gap_minutes` (default 5) between them.
+and at least `asked_min_gap_minutes` (default 5) between them. `surf_now` waits up to `surf_now_wait_seconds` (110; keep it below AstrBot's tool call timeout); a longer outing goes on and is remembered, and she is told she is still looking.
 
 ### Things it wants to look up
 
@@ -56,9 +56,9 @@ What a list shows is often just a title. Opening an item reads it:
 * **Bilibili videos**: the subtitles (AI Chinese subtitles first; a subtitle that only credits who made it means
   there is no speech). Bilibili only gives subtitles to a logged-in account: send `/surf_bili_login` in the local
   web chat and scan the QR code with the Bilibili app (a second account is best; it is only used to read
-  subtitles). Without subtitles, three frames from Bilibili's progress-bar preview sheets (no video is downloaded)
+  subtitles). Without subtitles, nine frames from Bilibili's progress-bar preview sheets (no video is downloaded)
   are put side by side and described by a vision model (`vision_provider_id`, default: the first provider that
-  takes images; at most `frames_videos_per_outing` videos per outing, a local model is slow). When neither works,
+  takes images; at most `frames_videos_per_outing` videos per outing, one picture at a time, `vision_timeout` each). When neither works,
   she is told so, instead of seeing an empty page.
 * **Web search results, and items whose list says little** (Hacker News, GitHub...): the page text, through
   [DeepSeek's Fetch API](https://api-docs.deepseek.com/guides/search/). DeepSeek downloads the page, so this

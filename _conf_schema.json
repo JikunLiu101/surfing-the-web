@@ -46,6 +46,12 @@
     "default": 5,
     "hint": "Keeps a loop or a double tool call from sending her out again and again."
   },
+  "surf_now_wait_seconds": {
+    "description": "How long surf_now waits for the outing (seconds)",
+    "type": "float",
+    "default": 110,
+    "hint": "Keep it below AstrBot's tool call timeout (120 by default). A longer outing is not lost: it goes on, what she sees is remembered, and she is told she is still looking."
+  },
   "self_cooldown_minutes": {
     "description": "Rest after an outing (minutes)",
     "type": "int",
@@ -135,7 +141,8 @@
   "vision_timeout": {
     "description": "Vision model timeout (seconds)",
     "type": "float",
-    "default": 45
+    "default": 90,
+    "hint": "Per picture, counted from its turn (pictures go one at a time). A local model that was asleep takes about a minute to wake."
   },
   "frames_videos_per_outing": {
     "description": "Videos looked at with the vision model per outing",

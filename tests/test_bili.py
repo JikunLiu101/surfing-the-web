@@ -292,3 +292,30 @@ def test_frames_follow_the_settings():
     assert it.meta["read"] == "frames" and "2 个画面" in prompts[0]
     reader = BiliReader({}, frames=99, buffer_ratio=3, min_buffer=20, max_buffer=5)
     assert (reader.frames, reader.buffer_ratio, reader.min_buffer, reader.max_buffer) == (16, 0.4, 20.0, 20.0)
+
+
+def test_frames_of_videos_opened_together_are_looked_at_one_at_a_time():
+    """The local model does one picture at a time; a picture's timeout should not run while it waits its turn."""
+    pytest.importorskip("PIL")
+    active, most = 0, 0
+
+    async def see(jpeg, prompt):
+        nonlocal active, most
+        active += 1
+        most = max(most, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return "画面"
+
+    async def go():
+        reader = BiliReader({}, see, max_looks=2)
+        async with SafeFetcher(set(reader.hosts), transport=httpx.MockTransport(Bili(subtitles=False))) as f:
+            return await asyncio.gather(*(reader.read(f, video(b)) for b in ("BV1xx", "BV2yy")))
+    first, second = asyncio.run(go())
+    assert most == 1 and first.meta["read"] == second.meta["read"] == "frames"
+
+
+def test_errors_in_the_log_say_what_they_are():
+    from surfing_the_web.bili import _why
+    assert _why(asyncio.TimeoutError()) == "TimeoutError"
+    assert _why(ValueError("bad")) == "ValueError: bad"

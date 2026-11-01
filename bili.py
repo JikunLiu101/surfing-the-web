@@ -314,6 +314,12 @@ _EYE = {"ok": "看了画面", "empty": "没拿到画面", "blind": "画面没看
         "failed": "画面没看成，出错了", "quota": "这次看的视频多，没顾上看画面", "off": ""}
 
 
+def _why(exc: BaseException) -> str:
+    """An error for the log: its kind too, since some say nothing (a timeout's text is empty)."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
 def how_read(sub: str, ear: str, eye: str) -> str:
     """How she took in a video, in her words: "没有字幕；听了声音；画面没看成，看画面的本机模型没反应".
     With subtitles, only that; what she cannot do at all ("off") is left out (her list of abilities says it)."""
@@ -343,6 +349,8 @@ class BiliReader:
         self.max_buffer = max(self.min_buffer, float(max_buffer))
         self.subtitle_tries, self.retry_pause = max(1, subtitle_tries), retry_pause
         self.looks = 0  # videos looked at with the vision model in this outing (it is slow)
+        self._eye = asyncio.Lock()  # one picture at a time: the local model does one anyway, and a timeout
+        # should count from the moment it is this picture's turn
         self.vision_failures = 0  # of those, how many the vision model did not answer
         self.login_expired = False
         self._device: dict | None = None
@@ -391,7 +399,7 @@ class BiliReader:
                 sub = "ok" if said else ("expired" if self.login_expired else "none")
             except Exception as exc:  # noqa: BLE001 - she can still look
                 sub = "failed"
-                log.warning("subtitles of %s: %s", bvid, exc)
+                log.warning("subtitles of %s: %s", bvid, _why(exc))
         heard, ear = "", "off"
         if not said and self.hear and cid:
             if self.listens >= self.max_listens:
@@ -404,7 +412,7 @@ class BiliReader:
                 except Exception as exc:  # noqa: BLE001 - she can still look
                     ear = "failed"
                     self.listen_failures += 1
-                    log.warning("listening to %s: %s", bvid, exc)
+                    log.warning("listening to %s: %s", bvid, _why(exc))
         looked, eye = "", "off"
         if not said and self.see and cid:
             if self.looks >= self.max_looks:
@@ -417,7 +425,7 @@ class BiliReader:
                     eye = "ok" if looked else "empty"
                 except Exception as exc:  # noqa: BLE001
                     eye = "blind" if self.vision_failures > failures else "failed"
-                    log.warning("frames of %s: %s", bvid, exc)
+                    log.warning("frames of %s: %s", bvid, _why(exc))
 
         how = how_read(sub, ear, eye)
         item.meta["how"] = how
@@ -508,9 +516,11 @@ class BiliReader:
             labels.append(clock_label(times[t]) if t < len(times) else "")
         if not frames:
             return ""
-        try:
-            seen = await self.see(grid(frames, labels), LOOK_PROMPT.format(title=title, n=len(frames)))
-        except Exception:
-            self.vision_failures += 1
-            raise
+        picture = grid(frames, labels)
+        async with self._eye:
+            try:
+                seen = await self.see(picture, LOOK_PROMPT.format(title=title, n=len(frames)))
+            except Exception:
+                self.vision_failures += 1
+                raise
         return clip(re.sub(r"\s+", " ", seen or "").strip(), 700)

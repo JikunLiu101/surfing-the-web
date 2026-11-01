@@ -25,7 +25,7 @@
 * 任何一次出门之后要歇 `self_cooldown_minutes` 分钟（默认 60），定时出门也会等；
 * 系统提示会告诉它今天还剩几次、什么时候能再去，并提醒它想去才去。
 
-主人亲口让它去（"去上网吧"）时不受这些限制：它调用 `surf_now(..., asked=true)`，插件会核对主人在这个私聊里的这句话确实说到了上网（出门、逛、搜、查、看看、B站、视频之类），对不上就不算，所以它没法自称"是主人让我去的"。这样的出门不占它自己的次数，另有上限（`asked_outings_per_day`，默认 10 次），两次之间至少隔 `asked_min_gap_minutes` 分钟（默认 5）。
+主人亲口让它去（"去上网吧"）时不受这些限制：它调用 `surf_now(..., asked=true)`，插件会核对主人在这个私聊里的这句话确实说到了上网（出门、逛、搜、查、看看、B站、视频之类），对不上就不算，所以它没法自称"是主人让我去的"。这样的出门不占它自己的次数，另有上限（`asked_outings_per_day`，默认 10 次），两次之间至少隔 `asked_min_gap_minutes` 分钟（默认 5）。`surf_now` 最多等 `surf_now_wait_seconds` 秒（默认 110，要比 AstrBot 的工具调用超时短）；看得久的出门不会白逛，会接着进行、照样记进记忆，只是先告诉它“还在看”。
 
 ### 想找的东西
 
@@ -39,7 +39,7 @@
 
 * **B 站视频**：读字幕（优先 AI 中文字幕；只有"字幕 by 某某"这种署名的，说明视频里没人说话）。B 站只给登录的账号看字幕：在本机网页对话里发 `/surf_bili_login`，用手机 B 站扫码确认（建议用小号，只用来读字幕）。B 站常把别的视频的 AI 字幕给过来，只用文件名对得上这个视频（以它的 aid + cid 开头）的，对不上就再问，最多 5 次。没有字幕时：
   * **听**：下载视频的音频（最小的那档，只要前 `listen_minutes` 分钟，约每分钟 0.5 MB），在本机用 PyAV 解码、用 SenseVoice（[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)）听写成文字，还会听出背景音乐、笑声、掌声；每次出门最多听 `listen_videos_per_outing` 个。几分钟的视频几秒就听完。要装 `av`、`sherpa-onnx`，并把模型（[sherpa-onnx 版 SenseVoice](https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17) 的 `model.int8.onnx` 和 `tokens.txt`，约 240 MB）放进 `data/plugin_data/astrbot_plugin_surfing_the_web/models/sense-voice/`（或 `listen_model_dir`）；没装就不听。
-  * **看**：从 B 站进度条预览图里截 9 个画面（不下载视频）：首尾各留一小段（时长的 5%，3 到 15 秒），从开头那段结束截到结尾那段开始，中间平均分 8 份（张数和缓冲都能在设置里改：`frames_per_video`、`frames_buffer_percent`、`frames_buffer_min_seconds`、`frames_buffer_max_seconds`）；拼成 3×3 的格子、每格标上时间，交给能看图的模型按时间讲发生了什么、抄下画面上的字（`vision_provider_id`，默认用第一个支持图片的模型；每次出门最多看 `frames_videos_per_outing` 个视频）。
+  * **看**：从 B 站进度条预览图里截 9 个画面（不下载视频）：首尾各留一小段（时长的 5%，3 到 15 秒），从开头那段结束截到结尾那段开始，中间平均分 8 份（张数和缓冲都能在设置里改：`frames_per_video`、`frames_buffer_percent`、`frames_buffer_min_seconds`、`frames_buffer_max_seconds`）；拼成 3×3 的格子、每格标上时间，交给能看图的模型按时间讲发生了什么、抄下画面上的字（`vision_provider_id`，默认用第一个支持图片的模型；每次出门最多看 `frames_videos_per_outing` 个视频；几个视频的画面排队一个一个看，`vision_timeout` 每张单独算、从轮到它开始计时，默认 90 秒）。
 
 什么都拿不到时会如实告诉她，不会让她以为是空页面。记进记忆的是她写感想时顺带写的一句话概括，不是内容的开头。
 * **网页搜索结果，以及列表上没什么内容的条目**（Hacker News、GitHub……）：通过 [DeepSeek 的 Fetch 接口](https://api-docs.deepseek.com/guides/search/) 读正文。网页由 DeepSeek 去下载，本机不会访问那个网站。Search 和 Fetch 用 AstrBot 里 DeepSeek 服务商的 key（或者 `deepseek_api_key`），每 1000 次成功调用各 0.75 美元，失败和没结果的不收费。

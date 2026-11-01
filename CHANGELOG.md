@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.3 (2026-11-01)
+
+- Frames are looked at one video at a time: videos opened together used to send their pictures to the local vision
+  model at once, and the second one's timeout ran while it waited its turn (a PV's frames were lost that way).
+  `vision_timeout` now counts from a picture's turn; its default is 90 seconds (a local model that was asleep takes
+  about a minute to wake).
+- `surf_now` waits up to `surf_now_wait_seconds` (110, below AstrBot's tool call timeout of 120). A longer outing is no
+  longer dropped: it goes on, what she sees is remembered, and she is told she is still looking.
+- The log says what kind of error stopped subtitles, listening or frames (a timeout's own text is empty).
+
 ## 0.7.2 (2026-11-01)
 
 - She knows how she took in each video, and remembers it: what she reads starts with it ("没有字幕；听了声音；画面没看成，看画面的本机模型没反应"), and the

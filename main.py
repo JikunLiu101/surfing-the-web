@@ -57,6 +57,7 @@ class SurfingTheWeb(star.Star):
         self.owner_last_seen: datetime | None = None
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
+        self._going: set[asyncio.Task] = set()  # outings surf_now stopped waiting for; they go on
         try:
             from .panel import Panel  # noqa: PLC0415
 
@@ -73,6 +74,8 @@ class SurfingTheWeb(star.Star):
     async def terminate(self) -> None:
         if self._task:
             self._task.cancel()
+        for going in list(self._going):
+            going.cancel()
 
     # ---------------------------------------------------------------- memory-core (optional)
 
@@ -330,6 +333,11 @@ class SurfingTheWeb(star.Star):
         await asyncio.to_thread(self.state.save, self.state_path)
         return outing
 
+    def _outing_done(self, task: asyncio.Task) -> None:
+        self._going.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning(f"[surfing] outing failed: {type(task.exception()).__name__}: {task.exception()}")
+
     # ---------------------------------------------------------------- reading what she opens
 
     def _warn_once(self, key: str, text: str) -> None:
@@ -371,7 +379,7 @@ class SurfingTheWeb(star.Star):
         if provider is None:
             self._warn_once("no-vision", "[surfing] no vision model: videos without subtitles are not looked at")
             return None
-        timeout = float(self.cfg.get("vision_timeout", 45))
+        timeout = float(self.cfg.get("vision_timeout", 90))
 
         async def see(jpeg: bytes, prompt: str) -> str:
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as fh:
@@ -540,10 +548,17 @@ class SurfingTheWeb(star.Star):
                         f" counted as her own): {topic!r} {reason!r}")
         else:
             logger.info(f"[surfing] she goes online herself ({self.state.self_used} today): {topic!r} {reason!r}")
+        going = asyncio.ensure_future(self.outing(topic))
+        self._going.add(going)
+        going.add_done_callback(self._outing_done)
+        wait = max(10.0, float(self.cfg.get("surf_now_wait_seconds", 110)))
         try:
-            outing = await asyncio.wait_for(self.outing(topic), timeout=100)
+            outing = await asyncio.wait_for(asyncio.shield(going), timeout=wait)
         except asyncio.TimeoutError:
-            return "网太慢了，这次没逛成"
+            # not lost: it goes on, what she sees is recorded, and the next message tells her
+            logger.info(f"[surfing] the outing takes longer than {wait:.0f}s; it goes on without surf_now waiting")
+            return ("这次看得久，还没逛完：你先回对方，就说还在看；看完的会自己记进记忆，"
+                    "下一句话里就能知道看到了什么。别说已经看完了，也别编看到的内容")
         if outing is None:
             return "现在上不了网"
         left = max(0, self._self_rules()[0] - self.state.self_used)
