@@ -148,6 +148,9 @@ def observation_text(it: Item) -> str:
         text += "：" + gist
     elif it.body:
         text += "：" + clip(it.body, 300)
+    how = str(it.meta.get("how") or "").strip()
+    if how:
+        text += f"（{how}）"
     return text
 
 
@@ -163,6 +166,7 @@ class Seen:
     title: str
     url: str
     thought: str = ""
+    how: str = ""  # videos: how she took it in ("读的字幕", "没有字幕；听了声音；…")
 
 
 class Sink(Protocol):
@@ -319,7 +323,8 @@ async def go_out(sources: list[Source], complete: Complete, sink: Sink, *, perso
             it.meta["gist"] = gists[i]
         sink.record(it, thought, when)
         already_seen.add(item_key(it))
-        outing.seen.append(Seen(when.isoformat(), it.site, it.title, it.url, thought))
+        outing.seen.append(Seen(when.isoformat(), it.site, it.title, it.url, thought,
+                                str(it.meta.get("how") or "")))
     return outing
 
 
@@ -499,7 +504,8 @@ def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int 
         lines.append("- 你最近自己上网看到的（想提就自然地提，不用每次都说）：")
         for at, r in rows:
             thought = f"，你当时想：{r['thought']}" if with_thoughts and r.get("thought") else ""
-            lines.append(f"  - {at.astimezone().strftime('%m-%d %H:%M')} 在{r['site']}看到《{r['title']}》{thought}")
+            how = f"（{r['how']}）" if r.get("how") else ""
+            lines.append(f"  - {at.astimezone().strftime('%m-%d %H:%M')} 在{r['site']}看到《{r['title']}》{how}{thought}")
     if can_wish:
         lines.append("- 想上网查点什么（自己好奇的、聊天里想知道的），用 surf_wish 记下来，下次出门会先去搜；"
                      "只写公开的话题词（游戏名、作品名、新闻之类），不要写任何人的名字、住址、工作等个人信息")

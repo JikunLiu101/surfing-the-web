@@ -104,7 +104,7 @@ def test_expired_login_is_noticed():
 def test_credit_only_subtitles_mean_no_speech():
     _, it = read(Bili(sub_lines=("♪",)))
     assert it.meta["read"] == "title"
-    assert it.meta["note"] == "没读到这个视频的字幕，画面也没看成，只看到了标题和简介"
+    assert it.meta["note"] == "没有字幕；所以只看到了标题和简介"
 
 
 def test_without_subtitles_she_looks_at_frames():
@@ -121,7 +121,7 @@ def test_without_subtitles_she_looks_at_frames():
     bili = Bili(subtitles=False)
     _, it = read(bili, see=see)
     assert it.meta["read"] == "frames"
-    assert it.body == "简介：六星辅助\n这个视频没有字幕，你按时间看了里面的一些画面：一个人 在雪地里 放技能"
+    assert it.body == "简介：六星辅助\n（这个视频你是怎么看的：没有字幕；看了画面）\n你按时间看了里面的一些画面：一个人 在雪地里 放技能"
     (size, prompt, first), = seen
     # the fake sheet has 4 tiles: all 4, in rows of 3, each 480 wide (270 high), with their times in the corner
     assert size == (3 * 480 + 2 * 6, 2 * 270 + 6) and "《冻河 技能演示》" in prompt and "4 个画面" in prompt
@@ -149,6 +149,15 @@ def test_looks_are_limited_per_outing():
             return [await reader.read(f, video(b)) for b in ("BV1xx", "BV2yy")]
     first, second = asyncio.run(go())
     assert len(calls) == 1 and first.meta["read"] == "frames" and second.meta["read"] == "title"
+    assert second.meta["note"] == "没登B站，读不了字幕；这次看的视频多，没顾上看画面；所以只看到了标题和简介"  # not a fault
+
+
+def test_how_she_read_it_in_her_words():
+    from surfing_the_web.bili import how_read
+    assert how_read("ok", "off", "off") == "读的字幕"
+    assert how_read("none", "ok", "blind") == "没有字幕；听了声音；画面没看成，看画面的本机模型没反应"
+    assert how_read("expired", "failed", "ok") == "B站登录过期了，读不到字幕；声音没听成，出错了；看了画面"
+    assert how_read("nologin", "off", "off") == "没登B站，读不了字幕"
 
 
 def test_helpers(tmp_path):

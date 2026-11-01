@@ -306,6 +306,22 @@ def _https(url: str) -> str:
 # ------------------------------------------------------------------ reading a video
 
 
+_SUB = {"ok": "读的字幕", "none": "没有字幕", "nologin": "没登B站，读不了字幕", "expired": "B站登录过期了，读不到字幕",
+        "failed": "字幕没读成，出错了"}
+_EAR = {"ok": "听了声音", "empty": "听了，没听出什么", "failed": "声音没听成，出错了",
+        "quota": "这次看的视频多，没顾上听", "off": ""}
+_EYE = {"ok": "看了画面", "empty": "没拿到画面", "blind": "画面没看成，看画面的本机模型没反应",
+        "failed": "画面没看成，出错了", "quota": "这次看的视频多，没顾上看画面", "off": ""}
+
+
+def how_read(sub: str, ear: str, eye: str) -> str:
+    """How she took in a video, in her words: "没有字幕；听了声音；画面没看成，看画面的本机模型没反应".
+    With subtitles, only that; what she cannot do at all ("off") is left out (her list of abilities says it)."""
+    if sub == "ok":
+        return _SUB["ok"]
+    return "；".join(p for p in (_SUB.get(sub, ""), _EAR.get(ear, ""), _EYE.get(eye, "")) if p)
+
+
 class BiliReader:
     """Fills in what she gets from opening a Bilibili video. One reader per outing."""
 
@@ -368,40 +384,56 @@ class BiliReader:
         desc = "" if desc in ("-", "") else desc
         parts = [f"简介：{clip(desc, 300)}"] if desc else []
 
-        said = ""
+        said, sub = "", "nologin"
         if self.login and aid and cid:
             try:
                 said = await self.subtitles(f, bvid, aid, cid)
+                sub = "ok" if said else ("expired" if self.login_expired else "none")
             except Exception as exc:  # noqa: BLE001 - she can still look
+                sub = "failed"
                 log.warning("subtitles of %s: %s", bvid, exc)
-        heard = ""
-        if not said and self.hear and cid and self.listens < self.max_listens:
-            self.listens += 1
-            try:
-                heard = await self.listen(f, bvid, cid)
-            except Exception as exc:  # noqa: BLE001 - she can still look
-                self.listen_failures += 1
-                log.warning("listening to %s: %s", bvid, exc)
-        looked = ""
-        if not said and self.see and cid and self.looks < self.max_looks:
-            self.looks += 1
-            try:
-                looked = await self.look(f, bvid, cid, item.title)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("frames of %s: %s", bvid, exc)
+        heard, ear = "", "off"
+        if not said and self.hear and cid:
+            if self.listens >= self.max_listens:
+                ear = "quota"
+            else:
+                self.listens += 1
+                try:
+                    heard = await self.listen(f, bvid, cid)
+                    ear = "ok" if heard else "empty"
+                except Exception as exc:  # noqa: BLE001 - she can still look
+                    ear = "failed"
+                    self.listen_failures += 1
+                    log.warning("listening to %s: %s", bvid, exc)
+        looked, eye = "", "off"
+        if not said and self.see and cid:
+            if self.looks >= self.max_looks:
+                eye = "quota"
+            else:
+                self.looks += 1
+                failures = self.vision_failures
+                try:
+                    looked = await self.look(f, bvid, cid, item.title)
+                    eye = "ok" if looked else "empty"
+                except Exception as exc:  # noqa: BLE001
+                    eye = "blind" if self.vision_failures > failures else "failed"
+                    log.warning("frames of %s: %s", bvid, exc)
 
+        how = how_read(sub, ear, eye)
+        item.meta["how"] = how
         if said:
             parts.append("视频里说的（自动识别的字幕，可能有错字）：\n" + said)
             item.meta["read"] = "subtitles"
         elif heard or looked:
+            parts.append(f"（这个视频你是怎么看的：{how}）")
             if heard:
-                parts.append("这个视频没有字幕，你听了里面的声音（本机听写的，可能有错字，[分:秒] 是时间）：\n" + heard)
+                parts.append("你听到的声音（本机听写的，可能有错字，[分:秒] 是时间）：\n" + heard)
             if looked:
-                parts.append(f"{'' if heard else '这个视频没有字幕，'}你按时间看了里面的一些画面：{looked}")
+                parts.append(f"你按时间看了里面的一些画面：{looked}")
             item.meta["read"] = "+".join(k for k, v in (("heard", heard), ("frames", looked)) if v)
         else:
             item.meta["read"] = "title"
-            item.meta["note"] = "没读到这个视频的字幕，画面也没看成，只看到了标题" + ("和简介" if desc else "")
+            item.meta["note"] = f"{how}；所以只看到了标题" + ("和简介" if desc else "")
         item.body = "\n".join(parts)
         return item
 

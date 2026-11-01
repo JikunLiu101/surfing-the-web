@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.2 (2026-11-01)
+
+- She knows how she took in each video, and remembers it: what she reads starts with it ("没有字幕；听了声音；画面没看成，看画面的本机模型没反应"), and the
+  same words go into her memory and her recent-outings note. Running out of looks or listens for the outing is said
+  as such, not as a fault.
+- Hearing that fails on a whole outing is a trouble of its own (`listen_down`), told only in the owner's private chat.
+- While the vision model or hearing is down, her abilities say so: the new key `surfing-the-web:frames` ("看B站视频的画面") and
+  `surfing-the-web:listen` are left out until an outing works again, with what to ask the owner. An outing that did not
+  try looking or listening keeps what the last one found.
+
 ## 0.7.1 (2026-11-01)
 
 - How a video's frames are picked is a setting: `frames_per_video` (9, up to 16), `frames_buffer_percent` (5% of the

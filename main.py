@@ -199,10 +199,18 @@ class SurfingTheWeb(star.Star):
         if bili != "off":
             if bili == "ok":
                 reads.append("B站视频能读字幕（里面说了什么）")
+            troubles = set(self.state.troubles)
             if self._viewer() is not None:
-                reads.append("B站视频没字幕时能按时间看里面的画面")
+                if "vision_down" in troubles:
+                    fixes.append(f"看画面用的本机模型上次没有反应，没字幕的视频现在看不了画面；要{owner}看看电脑上的 Ollama "
+                                 "开着没有（开了下次出门会自己恢复）")
+                else:
+                    reads.append("B站视频没字幕时能按时间看里面的画面")
             if self._listener() is not None:
-                reads.append("B站视频没字幕时能听里面的声音（说的话，还有音乐、笑声）")
+                if "listen_down" in troubles:
+                    fixes.append(f"上次听视频的声音出错了，没字幕的视频现在可能听不了；要{owner}看看上网逛逛的插件日志")
+                else:
+                    reads.append("B站视频没字幕时能听里面的声音（说的话，还有音乐、笑声）")
             elif self.cfg.get("listen_videos", True):
                 fixes.append(f"听视频要本机的语音识别模型，现在没准备好；要{owner}看看上网逛逛的插件日志")
             if bili == "none":
@@ -217,7 +225,12 @@ class SurfingTheWeb(star.Star):
         if bili == "ok":
             out.append(("surfing-the-web:subtitles", "看B站视频里说了什么",
                         f"点开B站视频能读到里面说的话（字幕），用的是{owner}给你登的B站账号；登录大约半年后会过期"))
-        if bili != "off" and self._listener() is not None:
+        if bili != "off" and self._viewer() is not None and "vision_down" not in self.state.troubles:
+            out.append(("surfing-the-web:frames", "看B站视频的画面",
+                        f"B站视频没字幕时，你能按时间看里面的 {int(self.cfg.get('frames_per_video', 9))} 个画面"
+                        "（本机的看图模型讲给你听）；"
+                        f"每次出门最多看 {int(self.cfg.get('frames_videos_per_outing', 2))} 个视频的画面"))
+        if bili != "off" and self._listener() is not None and "listen_down" not in self.state.troubles:
             out.append(("surfing-the-web:listen", "听B站视频里的声音",
                         "B站视频没字幕时，你能听里面的声音：说的话（本机听写，可能有错字），还有背景音乐、笑声、掌声；"
                         f"每次出门最多听 {int(self.cfg.get('listen_videos_per_outing', 2))} 个，"
@@ -244,13 +257,15 @@ class SurfingTheWeb(star.Star):
             "deepseek_balance": f"网页搜索、读网页用的 DeepSeek 余额不够了，搜不了也读不了网页正文；要{owner}去充值",
             "deepseek_key": f"网页搜索、读网页用的 DeepSeek key 不能用了；要{owner}检查一下",
             "vision_down": f"看画面用的本机模型没有反应（可能没开），没字幕的视频看不了画面；要{owner}看看电脑上的 Ollama",
+            "listen_down": f"听视频的声音时出错了（下载或听写没成），没字幕的视频没听成；要{owner}看看上网逛逛的插件日志",
         }
         out += [texts[t] for t in self.state.troubles if t in texts]
         return out
 
     @staticmethod
-    def _troubles_of(outing, reader) -> list[str]:
-        """Codes for what did not work on this outing (kept until the next outing)."""
+    def _troubles_of(outing, reader, before=()) -> list[str]:
+        """Codes for what did not work on this outing (kept until the next outing). Looking and listening: an
+        outing that did not try them keeps what the last one found."""
         errors = " ".join(outing.errors)
         out = []
         if "api.deepseek.com" in errors and "HTTP 402" in errors:
@@ -258,8 +273,10 @@ class SurfingTheWeb(star.Star):
         if "api.deepseek.com" in errors and "HTTP 401" in errors:
             out.append("deepseek_key")
         bili = reader.bili
-        if bili is not None and bili.looks and bili.vision_failures >= bili.looks:
+        if bili is not None and (bili.vision_failures >= bili.looks if bili.looks else "vision_down" in before):
             out.append("vision_down")
+        if bili is not None and (bili.listen_failures >= bili.listens if bili.listens else "listen_down" in before):
+            out.append("listen_down")
         return out
 
     async def outing(self, topic: str = ""):
@@ -307,7 +324,7 @@ class SurfingTheWeb(star.Star):
         if reader.bili is not None and reader.bili.login_expired:
             await asyncio.to_thread(mark_expired, self.login_path)
             logger.warning("[surfing] the Bilibili login has expired: send /surf_bili_login again")
-        self.state.troubles = self._troubles_of(outing, reader)
+        self.state.troubles = self._troubles_of(outing, reader, self.state.troubles)
         if self.state.troubles:
             logger.warning(f"[surfing] troubles on this outing: {', '.join(self.state.troubles)}")
         await asyncio.to_thread(self.state.save, self.state_path)

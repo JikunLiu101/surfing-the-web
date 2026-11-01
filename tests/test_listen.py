@@ -63,7 +63,7 @@ def test_without_subtitles_she_listens_to_the_smallest_audio_from_an_allowed_hos
                                              meta={"bvid": "BV1xx"}))
 
     it = asyncio.run(go())
-    assert got == [b"AUDIO"] and it.meta["read"] == "heard" and "你听了里面的声音" in it.body and "大家好" in it.body
+    assert got == [b"AUDIO"] and it.meta["read"] == "heard" and "（这个视频你是怎么看的：没登B站，读不了字幕；听了声音）" in it.body and "大家好" in it.body
     audio = next(r for r in bili.asked if r.url.host == "upos-sz-mirrorcos.bilivideo.com")
     assert audio.url.path == "/small.m4s"  # the smallest stream, from the allowed backup host
     assert audio.headers["range"].startswith("bytes=0-") and "SESSDATA" not in audio.headers.get("cookie", "")
@@ -86,3 +86,38 @@ def test_decode_a_real_audio_file():
             out.mux(packet)
     samples = decode(buf.getvalue(), max_seconds=2)
     assert samples.dtype == np.float32 and abs(samples.size - 32000) < 400  # 2 s at 16 kHz, mono
+
+
+def test_frames_down_but_heard_she_knows_she_only_listened():
+    """No subtitles, the vision model is off, hearing works: she reads that she only heard it, and why."""
+    pytest.importorskip("PIL")
+
+    async def hear(audio):
+        return "[0:00] 大家好"
+
+    async def see(jpeg, prompt):
+        raise ConnectionError("ollama is not running")
+
+    class Shots(FakeBili):
+        def __call__(self, req):
+            if req.url.path == "/x/player/videoshot":
+                return httpx.Response(200, json={"code": 0, "data": {"img_x_len": 1, "img_y_len": 1,
+                                                                      "image": ["//bimp.hdslb.com/a.jpg"], "index": [0]}})
+            if req.url.host == "bimp.hdslb.com":
+                from PIL import Image
+                buf = io.BytesIO()
+                Image.new("RGB", (16, 9), "red").save(buf, format="PNG")
+                return httpx.Response(200, content=buf.getvalue())
+            return super().__call__(req)
+
+    async def go():
+        reader = BiliReader({}, see, hear=hear, listen_seconds=60)
+        async with SafeFetcher(set(reader.hosts), transport=httpx.MockTransport(Shots())) as f:
+            it = await reader.read(f, Item(source="bilibili_search", site="B站", title="t", url="u",
+                                           meta={"bvid": "BV1xx"}))
+            return reader, it
+
+    reader, it = asyncio.run(go())
+    assert it.meta["read"] == "heard" and reader.vision_failures == 1
+    assert it.meta["how"] == "没登B站，读不了字幕；听了声音；画面没看成，看画面的本机模型没反应"
+    assert "画面没看成，看画面的本机模型没反应" in it.body and "大家好" in it.body

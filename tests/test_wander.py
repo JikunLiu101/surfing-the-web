@@ -178,3 +178,14 @@ def test_gist_is_remembered_instead_of_the_start_of_the_page():
     assert without.startswith("在B站看到《匹克球规则》：字幕开头字幕开头") and len(without) < 330
     it.meta["gist"] = "UP主讲匹克球怎么计分：一局先到 11 分"
     assert observation_text(it) == "在B站看到《匹克球规则》：UP主讲匹克球怎么计分：一局先到 11 分"
+
+
+def test_how_a_video_was_taken_in_is_remembered():
+    from datetime import datetime, timezone
+
+    from surfing_the_web.wander import observation_text, recent_block
+    it = Item("b", "B站", "冻河", "u", meta={"gist": "技能演示", "how": "没有字幕；听了声音；画面没看成，看画面的本机模型没反应"})
+    assert observation_text(it) == "在B站看到《冻河》：技能演示（没有字幕；听了声音；画面没看成，看画面的本机模型没反应）"
+    now = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+    row = {"at": now.isoformat(), "site": "B站", "title": "冻河", "url": "u", "thought": "", "how": "没有字幕；听了声音"}
+    assert "《冻河》（没有字幕；听了声音）" in recent_block([row], now)
