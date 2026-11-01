@@ -7,7 +7,7 @@ persona go online **on its own**. A few times a day, when nobody is chatting wit
 lists (Bilibili, tech news, forums...), opens what *it* finds interesting and thinks something about it. Later it
 can tell you "I saw this today..." about something it actually saw.
 
-Works alone (experiences go to a local log), and much better with [memory-core](https://github.com/JikunLiu101/memory-core):
+Works alone (experiences go to a local log), and much better with [memory-core](https://github.com/JikunLiu101/astrbot_plugin_memory_core) (记忆核心):
 what it saw becomes part of its long-term memory and its diary.
 
 ## How an outing works
@@ -127,7 +127,7 @@ Requirements: `httpx`, `beautifulsoup4` (both already in AstrBot).
 
 ```bash
 pip install pytest -r requirements.txt
-pip install "memory-core @ git+https://github.com/JikunLiu101/memory-core"   # optional, for the sink test
+pip install memory-core-lib   # optional, for the sink test
 python -m pytest -q
 ```
 

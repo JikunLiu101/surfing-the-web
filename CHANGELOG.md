@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-11-01)
+
+- Market metadata: Chinese name 上网逛逛, `astrbot_version`, `support_platforms`, tags; an English
+  translation of the name and description (`.astrbot-plugin/i18n/en-US.json`).
 
 - Fewer prompt tokens: the full note of what she saw (with her thoughts and how to go online, about 1,000
   characters, never cached since it goes with the user's message) is sent with the first message of a talk

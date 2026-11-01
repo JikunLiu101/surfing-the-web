@@ -1,4 +1,4 @@
-# surfing-the-web
+# 上网逛逛（surfing-the-web）
 
 [English](README.en.md) | **中文**
 
@@ -6,7 +6,7 @@
 每天几次，没人跟它聊天的时候，它会看几个公开的列表（B 站、科技新闻、论坛……），点开**它自己**觉得有意思的，再想点什么。
 之后它就能跟你说"我今天刷到了……"，而且说的是它真看过的东西。
 
-单独就能用（经历写进本地记录），配合 [memory-core](https://github.com/JikunLiu101/memory-core) 更好：看到的东西会变成它的长期记忆，也会写进日记。
+单独就能用（经历写进本地记录），配合[记忆核心](https://github.com/JikunLiu101/astrbot_plugin_memory_core)（memory-core）更好：看到的东西会变成它的长期记忆，也会写进日记。
 
 ## 一次出门是怎样的
 
@@ -93,11 +93,15 @@
 
 ```bash
 pip install pytest -r requirements.txt
-pip install "memory-core @ git+https://github.com/JikunLiu101/memory-core"   # 可选，用于记忆写入的测试
+pip install memory-core-lib   # 可选，用于记忆写入的测试
 python -m pytest -q
 ```
 
 `sources.py`（站点、安全抓取、DeepSeek）、`bili.py`（字幕、画面、扫码登录）、`reading.py`（点开以后读什么）和 `wander.py`（一次出门、计划、状态）不依赖 AstrBot。
+
+## 支持的平台
+
+只用 AstrBot 的通用消息事件，不依赖哪个平台独有的功能。需要的是：私聊里认得出谁是主人（她自己上网的次数、扫码登录都只在主人私聊里）。元数据里列的是满足这些的主流平台：Telegram、QQ（OneBot / aiocqhttp）、Discord、KOOK、飞书、钉钉、企业微信、Slack。**实际测过的只有 Telegram 和 AstrBot 自带的网页对话**，其他平台欢迎反馈。需要 AstrBot 4.24.2 及以上。
 
 ## 致谢
 

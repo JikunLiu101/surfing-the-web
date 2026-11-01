@@ -1,6 +1,24 @@
 name: astrbot_plugin_surfing_the_web
-display_name: surfing-the-web
-desc: Lets your persona go online on its own a few times a day (Bilibili, tech news, forums...), pick what it likes, read it (web pages, Bilibili subtitles or frames) and think about it. Read-only, allow-listed; works with memory-core as long-term memory.
+display_name: 上网逛逛
+short_desc: "角色每天自己上网逛几次：挑感兴趣的点开读，写下感想，变成记忆"
+desc: "角色每天自己上网几次（B站、机核、IT之家、少数派、V2EX、GitHub、Hacker News……），用自己的眼光挑，点开读内容（网页正文、B站字幕或画面），写一两句感想。只读、站点白名单；可以接 memory-core 当长期记忆。 Lets your persona go online on its own a few times a day (Bilibili, tech news, forums...), pick what it likes, read it (web pages, Bilibili subtitles or frames) and think about it. Read-only, allow-listed; works with memory-core as long-term memory."
 author: JikunLiu101
-version: 0.4.0
+version: 0.5.0
 repo: https://github.com/JikunLiu101/surfing-the-web
+astrbot_version: ">=4.24.2"
+support_platforms:
+  - telegram
+  - aiocqhttp
+  - discord
+  - kook
+  - lark
+  - dingtalk
+  - wecom
+  - slack
+tags:
+  - 上网
+  - B站
+  - 陪伴
+  - 记忆
+  - browsing
+social_link: https://github.com/JikunLiu101
