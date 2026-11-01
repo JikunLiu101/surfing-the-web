@@ -182,6 +182,12 @@
     "type": "int",
     "default": 24
   },
+  "recent_full_gap_minutes": {
+    "description": "Full note only at the start of a talk (minutes of quiet)",
+    "type": "int",
+    "default": 30,
+    "hint": "The full note (what she saw and thought, how to go online) goes with the first message after this many quiet minutes, and whenever it changes; the later replies get a short one (titles, outings left). Saves prompt tokens. 0: always the full note."
+  },
   "owner_ids": {
     "description": "Owner user IDs",
     "type": "list",

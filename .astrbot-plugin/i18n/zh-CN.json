@@ -110,6 +110,10 @@
     "recent_hours": {
       "description": "往前看多少小时"
     },
+    "recent_full_gap_minutes": {
+      "description": "只在一段对话开头附整段（安静多少分钟算新一段）",
+      "hint": "安静这么久之后的第一句、或者内容有变化时（刚出门回来、想查的变了），附整段（看到的、当时的想法、怎么上网）；同一段对话后面只附一小段（标题和还剩几次）。省 token。填 0：每句都附整段。"
+    },
     "owner_ids": {
       "description": "主人的用户 ID",
       "hint": "谁能用 /surf、/surf_log。留空：从 memory-core 插件读取。"

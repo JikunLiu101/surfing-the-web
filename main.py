@@ -28,8 +28,8 @@ from .bili import (LOGIN_HOSTS, QR_DONE, QR_EXPIRED, QR_SCANNED, BiliReader, loa
                    mark_expired, qr_poll, qr_start, save_login, whoami)
 from .reading import Reader
 from .sources import BUILTIN, PageReader, SafeFetcher, build_searches, build_sources
-from .wander import (BufferSink, LogSink, MemoryCoreSink, State, asks_to_go_online, due, go_out, recent_block,
-                     strip_blocks)
+from .wander import (BufferSink, LogSink, MemoryCoreSink, NoteMemo, State, asks_to_go_online, brief_block, due,
+                     go_out, recent_block, strip_blocks)
 
 PLUGIN_NAME = "astrbot_plugin_surfing_the_web"
 MEMORY_CORE = "astrbot_plugin_memory_core"
@@ -49,6 +49,7 @@ class SurfingTheWeb(star.Star):
         self.data_dir = Path(star.StarTools.get_data_dir(PLUGIN_NAME))
         self.state_path = self.data_dir / "state.json"
         self.state = State.load(self.state_path)
+        self.notes = NoteMemo()
         self.login_path = self.data_dir / "bilibili_login.json"  # her Bilibili account (never logged, not in git)
         self._warned: set[str] = set()
         self.rng = random.Random()
@@ -409,7 +410,8 @@ class SurfingTheWeb(star.Star):
     async def inject(self, event: AstrMessageEvent, req: ProviderRequest):
         """Tell her she goes online on her own, and what she saw lately. It goes with the user's message (it
         changes after every outing; the system prompt stays the same, so the provider's prompt cache covers it)
-        and is taken out of the earlier messages in the history."""
+        and is taken out of the earlier messages in the history. The full note goes with the first message of a
+        talk and when it changes; the later replies get a short one (titles and the count)."""
         try:
             strip_blocks(req.contexts, ("surfing_the_web",))
         except Exception as exc:  # noqa: BLE001 - never block a reply
@@ -433,7 +435,13 @@ class SurfingTheWeb(star.Star):
                              self_left=self_left, self_ready=self_ready,
                              troubles=self._trouble_texts(self._owner_title()) if owner_private else [],
                              asked_left=asked_left)
-        req.extra_user_content_parts.append(TextPart(text=block))
+        hours = int(self.cfg.get("recent_hours", 24))
+        if not self.notes.full_due(event.unified_msg_origin, block, now,
+                                   float(self.cfg.get("recent_full_gap_minutes", 30))):
+            block = brief_block(self.state.recent, now, hours=hours, self_left=self_left, self_ready=self_ready,
+                                asked_left=asked_left)
+        if block:
+            req.extra_user_content_parts.append(TextPart(text=block))
 
     @filter.llm_tool(name="surf_now")
     async def tool_surf_now(self, event: AstrMessageEvent, topic: str = "", reason: str = "", asked: bool = False):

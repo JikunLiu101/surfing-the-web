@@ -466,16 +466,7 @@ def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int 
     """What she saw online lately, sent with the user's message (so she can bring it up before it is consolidated).
     Her thoughts are her inner life: only included when `with_thoughts` (the owner's private chat), like
     `troubles`: what does not work right now and whom to ask about it."""
-    since = now - timedelta(hours=hours)
-    rows = []
-    for r in recent:
-        try:
-            at = datetime.fromisoformat(r["at"])
-        except (KeyError, ValueError):
-            continue
-        if at >= since:
-            rows.append((at, r))
-    rows = rows[-limit:]
+    rows = _recent_rows(recent, now, hours, limit)
     lines = ["<surfing_the_web>",
              "- 没人跟你聊天的时候，你会自己上网逛逛，看到的东西会变成你的记忆和日记"]
     if rows:
@@ -503,6 +494,59 @@ def recent_block(recent: list[dict], now: datetime, hours: int = 24, limit: int 
         lines += [f"  - {t}" for t in troubles]
     lines.append("</surfing_the_web>")
     return "\n".join(lines)
+
+
+def _recent_rows(recent: list[dict], now: datetime, hours: int, limit: int) -> list[tuple[datetime, dict]]:
+    since = now - timedelta(hours=hours)
+    rows = []
+    for r in recent:
+        try:
+            at = datetime.fromisoformat(r["at"])
+        except (KeyError, ValueError):
+            continue
+        if at >= since:
+            rows.append((at, r))
+    return rows[-limit:]
+
+
+def brief_block(recent: list[dict], now: datetime, hours: int = 24, limit: int = 5, *,
+                self_left: int | None = None, self_ready: str = "", asked_left: int | None = None) -> str:
+    """The short note for the later replies of a talk: what she saw (titles only) and how many outings are left.
+    The full note (`recent_block`) went with the first message of this talk."""
+    rows = _recent_rows(recent, now, hours, limit)
+    lines = ["<surfing_the_web>"]
+    if rows:
+        lines.append("- 你最近自己上网看到的（详细的这段对话开头给过你，想提就自然地提）："
+                     + "、".join(f"《{r['title']}》" for _, r in rows))
+    if self_left is not None:
+        if self_left > 0:
+            when = f"（{self_ready}以后）" if self_ready else ""
+            lines.append(f"- 今天还能自己上网 {self_left} 次{when}")
+        else:
+            lines.append("- 今天自己上网的次数用完了" + ("；对方亲口让你去时照样能去，surf_now 填 asked=true"
+                                                      if asked_left else ""))
+    if len(lines) == 1:
+        return ""
+    lines.append("</surfing_the_web>")
+    return "\n".join(lines)
+
+
+class NoteMemo:
+    """Per chat: when she was last sent a note and what the full one said. The full note goes at the start of a
+    talk (the chat was quiet for `gap_minutes`, or nothing was sent since the plugin started) and whenever it
+    changes (an outing, a new wish, the count); otherwise the short one. The full note is about 1,000 characters
+    and is never cached (it goes with the user's message), so sending it once per talk saves most of it."""
+
+    def __init__(self) -> None:
+        self.chats: dict[str, tuple[datetime, str]] = {}
+
+    def full_due(self, chat: str, full: str, now: datetime, gap_minutes: float) -> bool:
+        digest = hashlib.sha1(full.encode("utf-8")).hexdigest()
+        last = self.chats.get(chat)
+        due_ = (gap_minutes <= 0 or last is None or last[1] != digest
+                or (now - last[0]).total_seconds() >= gap_minutes * 60)
+        self.chats[chat] = (now, digest)
+        return due_
 
 
 def strip_blocks(contexts: list, tags: tuple[str, ...]) -> int:

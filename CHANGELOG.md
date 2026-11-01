@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fewer prompt tokens: the full note of what she saw (with her thoughts and how to go online, about 1,000
+  characters, never cached since it goes with the user's message) is sent with the first message of a talk
+  (`recent_full_gap_minutes` of quiet, default 30) and whenever it changes; the later replies of the same talk get a
+  short one (`brief_block`: titles and outings left). 0 sends the full note every time, as before.
+
 ## 0.4.0 (2026-10-31)
 
 - When the owner asks the persona to go online, its own limits no longer stop it: `surf_now(..., asked=true)` is
