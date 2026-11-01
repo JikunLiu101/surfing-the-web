@@ -143,6 +143,28 @@
     "default": 2,
     "hint": "A local vision model is slow; the others keep their title and description."
   },
+  "frames_per_video": {
+    "description": "Frames looked at per video",
+    "type": "int",
+    "default": 9,
+    "hint": "1 to 16, in rows of three. The first is where the start buffer ends, the last where the end buffer begins, the others evenly between."
+  },
+  "frames_buffer_percent": {
+    "description": "Buffer at each end (% of the video)",
+    "type": "int",
+    "default": 5,
+    "hint": "Skipped at the start and the end (logos, black screens). 0 to 40."
+  },
+  "frames_buffer_min_seconds": {
+    "description": "Shortest buffer (seconds)",
+    "type": "float",
+    "default": 3
+  },
+  "frames_buffer_max_seconds": {
+    "description": "Longest buffer (seconds)",
+    "type": "float",
+    "default": 15
+  },
   "listen_videos": {
     "description": "Listen to videos without subtitles",
     "type": "bool",

@@ -91,6 +91,20 @@
       "description": "每次出门最多看几个视频的画面",
       "hint": "本机视觉模型比较慢；其余的只看标题和简介。"
     },
+    "frames_per_video": {
+      "description": "每个视频看几个画面",
+      "hint": "1 到 16，三个一行拼成格子。第一张在开头缓冲结束的地方，最后一张在结尾缓冲开始的地方，其余在中间平均分开。"
+    },
+    "frames_buffer_percent": {
+      "description": "首尾各留多少缓冲（占视频时长的百分比）",
+      "hint": "开头和结尾常是片头、黑屏，跳过这一段。0 到 40。"
+    },
+    "frames_buffer_min_seconds": {
+      "description": "缓冲最短几秒"
+    },
+    "frames_buffer_max_seconds": {
+      "description": "缓冲最长几秒"
+    },
     "listen_videos": {
       "description": "没字幕的视频听声音",
       "hint": "下载视频的音频（最小的那档、只要开头几分钟），交给本机语音识别模型（SenseVoice）听：说的话、背景音乐、笑声。要装 av、sherpa-onnx 和模型。"

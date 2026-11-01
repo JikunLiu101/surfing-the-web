@@ -392,6 +392,10 @@ class SurfingTheWeb(star.Star):
             hear = (lambda audio: asyncio.to_thread(listener.hear, audio)) if listener else None
             bili = BiliReader(load_login(self.login_path), self._viewer(),
                               max_looks=int(self.cfg.get("frames_videos_per_outing", 2)), hear=hear,
+                              frames=int(self.cfg.get("frames_per_video", 9)),
+                              buffer_ratio=float(self.cfg.get("frames_buffer_percent", 5)) / 100,
+                              min_buffer=float(self.cfg.get("frames_buffer_min_seconds", 3)),
+                              max_buffer=float(self.cfg.get("frames_buffer_max_seconds", 15)),
                               max_listens=int(self.cfg.get("listen_videos_per_outing", 2)),
                               listen_seconds=60 * max(1, int(self.cfg.get("listen_minutes", 8))))
         return Reader(bili, pages)

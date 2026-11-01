@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1 (2026-11-01)
+
+- How a video's frames are picked is a setting: `frames_per_video` (9, up to 16), `frames_buffer_percent` (5% of the
+  video at each end), `frames_buffer_min_seconds` (3), `frames_buffer_max_seconds` (15).
+
 ## 0.7.0 (2026-11-01)
 
 - **Hearing videos.** A Bilibili video without subtitles is listened to: its smallest audio stream (only the first

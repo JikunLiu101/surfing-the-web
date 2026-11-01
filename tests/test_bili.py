@@ -268,3 +268,18 @@ def test_only_other_videos_subtitles_means_none():
 
 def test_clock_label():
     assert clock_label(0) == "0秒" and clock_label(75) == "1分15秒" and clock_label(75000.0) == "1分15秒"
+
+
+def test_frames_follow_the_settings():
+    pytest.importorskip("PIL")
+    prompts = []
+
+    async def see(jpeg, prompt):
+        prompts.append(prompt)
+        return "画面"
+
+    # the fake sheet has 4 tiles at 0, 10, 20, 30 s; 2 frames with no buffer: the first and the last tile
+    _, it = read(Bili(subtitles=False), see=see, frames=2, buffer_ratio=0, min_buffer=0, max_buffer=0)
+    assert it.meta["read"] == "frames" and "2 个画面" in prompts[0]
+    reader = BiliReader({}, frames=99, buffer_ratio=3, min_buffer=20, max_buffer=5)
+    assert (reader.frames, reader.buffer_ratio, reader.min_buffer, reader.max_buffer) == (16, 0.4, 20.0, 20.0)

@@ -313,13 +313,18 @@ class BiliReader:
 
     def __init__(self, login: dict | None = None, see: See | None = None, *, frames: int = 9, max_looks: int = 2,
                  subtitle_limit: int = 2500, subtitle_tries: int = 5, retry_pause: float = 0.6,
-                 hear: Hear | None = None, max_listens: int = 2, listen_seconds: float = 480) -> None:
+                 hear: Hear | None = None, max_listens: int = 2, listen_seconds: float = 480,
+                 buffer_ratio: float = 0.05, min_buffer: float = 3.0, max_buffer: float = 15.0) -> None:
         self.login = dict(login or {})
         self.see = see
         self.hear, self.max_listens, self.listen_seconds = hear, max_listens, listen_seconds
         self.listens = 0  # videos listened to in this outing (decoding and recognising take a while)
         self.listen_failures = 0
-        self.frames, self.max_looks, self.subtitle_limit = frames, max_looks, subtitle_limit
+        self.frames, self.max_looks, self.subtitle_limit = max(1, min(int(frames), 16)), max_looks, subtitle_limit
+        # how the frames are spread: a buffer at both ends (a share of the span, kept between two lengths)
+        self.buffer_ratio = max(0.0, min(float(buffer_ratio), 0.4))
+        self.min_buffer = max(0.0, float(min_buffer))
+        self.max_buffer = max(self.min_buffer, float(max_buffer))
         self.subtitle_tries, self.retry_pause = max(1, subtitle_tries), retry_pause
         self.looks = 0  # videos looked at with the vision model in this outing (it is slow)
         self.vision_failures = 0  # of those, how many the vision model did not answer
@@ -459,7 +464,8 @@ class BiliReader:
         if not sheets or not times:  # without times the last sheet's empty tiles cannot be told apart
             return ""
         per = cols * rows
-        tiles = pick_tiles(times, len(sheets) * per, self.frames)
+        tiles = pick_tiles(times, len(sheets) * per, self.frames, buffer_ratio=self.buffer_ratio,
+                           min_buffer=self.min_buffer, max_buffer=self.max_buffer)
         got: dict[int, bytes] = {}
         frames, labels = [], []
         for t in tiles:
