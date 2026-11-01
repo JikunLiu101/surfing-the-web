@@ -155,9 +155,26 @@ def test_helpers(tmp_path):
     assert choose_subtitle([{"lan": "en", "subtitle_url": "a"}, {"lan": "zh-CN", "subtitle_url": "b"}])["lan"] == "zh-CN"
     assert choose_subtitle([{"lan": "ai-zh", "subtitle_url": ""}]) is None
     assert subtitle_text({"body": [{"content": "好"}, {"content": "好"}]}) == ""
-    assert pick_tiles([0, 10, 20, 30, 40, 50], 6, 3) == [1, 2, 4]
     assert pick_tiles([0, 0, 0], 3, 3) == [0]
-    assert pick_tiles([], 9, 3) == [1, 4, 7]
+    assert pick_tiles([], 9, 3) == [1, 4, 7]  # without times: one tile in from each end, evenly between
+
+
+def test_tiles_tell_the_story_from_start_to_end():
+    times = [float(t) for t in range(0, 181, 5)]  # a 3-minute video, a tile every 5 seconds
+    picked = pick_tiles(times, len(times), 9)
+    got = [times[i] for i in picked]
+    # buffer: 5% of 180 s = 9 s at each end; then 8 equal parts between 9 s and 171 s (20.25 s each)
+    assert len(got) == 9 and got[0] == 10.0 and got[-1] == 170.0
+    assert got == [10.0, 30.0, 50.0, 70.0, 90.0, 110.0, 130.0, 150.0, 170.0]
+    short = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]  # a 10-second video: a 3-second buffer, targets 3, 5, 7 s (ties: earlier)
+    assert [short[i] for i in pick_tiles(short, 6, 3)] == [2.0, 4.0, 6.0]
+    long_ = [float(t) for t in range(0, 3601, 5)]  # an hour: the buffer stops at 15 s
+    got_long = times_of(long_, pick_tiles(long_, len(long_), 9))
+    assert got_long[0] == 15.0 and got_long[-1] == 3585.0
+
+
+def times_of(times, picked):
+    return [times[i] for i in picked]
     assert pvdata_times(b"\x00\x00\x00\x05") == [0.0, 5.0] and pvdata_times(b"\x00") == []
     url = "https://www.bilibili.com/?DedeUserID=42&SESSDATA=s3cret&bili_jct=jct&gourl=x"
     assert login_from_url(url) == {"SESSDATA": "s3cret", "bili_jct": "jct", "DedeUserID": "42"}

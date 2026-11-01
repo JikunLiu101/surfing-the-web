@@ -23,13 +23,14 @@ from pathlib import Path
 from typing import Awaitable, Callable
 from urllib.parse import parse_qs, quote, urlsplit
 
-from .sources import Item, SafeFetcher, clip
+from .sources import host_allowed, Item, SafeFetcher, clip
 
 log = logging.getLogger("surfing_the_web")
 
 API = "https://api.bilibili.com"
 PASSPORT = "https://passport.bilibili.com/x/passport-login/web/qrcode"
-HOSTS = ("api.bilibili.com", "hdslb.com")  # hdslb.com: subtitle files and preview sheets
+HOSTS = ("api.bilibili.com", "hdslb.com", "bilivideo.com", "bilivideo.cn")
+# hdslb.com: subtitle files and preview sheets; bilivideo.com/.cn: the video's audio (when she listens)
 LOGIN_HOSTS = ("passport.bilibili.com", "api.bilibili.com")
 LOGIN_KEYS = ("SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5")
 REFERER = {"Referer": "https://www.bilibili.com/"}
@@ -38,6 +39,7 @@ SUBTITLE_LANGS = ("ai-zh", "zh-CN", "zh-Hans", "zh")
 QR_DONE, QR_WAITING, QR_SCANNED, QR_EXPIRED = 0, 86101, 86090, 86038
 
 See = Callable[[bytes, str], Awaitable[str]]  # (jpeg, prompt) -> what the vision model saw
+Hear = Callable[[bytes], Awaitable[str]]  # (audio) -> what was said and heard
 
 LOOK_PROMPT = ("这张图是B站视频《{title}》里按时间顺序截下来的 {n} 个画面，拼成格子：从左到右、从上到下，"
                "每格左上角标着它在视频里的时间（如 1m15s 是第 1 分 15 秒）。请按时间顺序讲这段视频里发生了什么：场景、人物或东西、在做什么、"
@@ -188,20 +190,31 @@ def subtitle_text(body: dict, limit: int = 2500, min_chars: int = 15) -> str:
 # ------------------------------------------------------------------ frames
 
 
-def pick_tiles(times: list[float], total: int, n: int) -> list[int]:
-    """`n` preview tiles spread over the video: the tile closest to 1/6, 3/6, 5/6 of the way (for n = 3).
-    `times` are the tiles' times (seconds or milliseconds, only their order matters); without them, tiles are
-    spread over `total`."""
+def pick_tiles(times: list[float], total: int, n: int, *, buffer_ratio: float = 0.05,
+               min_buffer: float = 3.0, max_buffer: float = 15.0) -> list[int]:
+    """`n` preview tiles that tell the story from start to end: a short buffer is left at both ends (the first and
+    last seconds are often a logo or a black screen), then the first point is where the start buffer ends, the
+    last where the end buffer begins, and the others split the time between them into n - 1 equal parts; each
+    point takes the tile closest to it. The buffer is `buffer_ratio` of the span, kept between `min_buffer` and
+    `max_buffer` seconds. `times` are the tiles' times (Bilibili takes them at key frames, so a still video has
+    few); without them, tiles are spread over `total` the same way."""
     count = min(len(times), total) if times else total
     if count <= 0 or n <= 0:
         return []
     if not times:
-        return sorted({min(count - 1, int(count * (2 * k + 1) / (2 * n))) for k in range(n)})
-    times = times[:count]
-    end = max(times) or 1.0
+        times = [float(i) for i in range(count)]  # tile positions stand in for times
+        lo, hi = 1.0 if count > 2 else 0.0, count - 2.0 if count > 2 else count - 1.0
+    else:
+        times = [float(t) for t in times[:count]]
+        span = max(times) - min(times)
+        scale = 1000.0 if span > 36000 else 1.0  # milliseconds
+        buffer = min(max(span * buffer_ratio, min_buffer * scale), max_buffer * scale)
+        if 2 * buffer >= span:
+            buffer = span / 4
+        lo, hi = min(times) + buffer, max(times) - buffer
+    targets = [lo] if n == 1 else [lo + (hi - lo) * k / (n - 1) for k in range(n)]
     picked: list[int] = []
-    for k in range(n):
-        target = end * (2 * k + 1) / (2 * n)
+    for target in targets:
         best = min(range(count), key=lambda i: (abs(times[i] - target), i))
         if best not in picked:
             picked.append(best)
@@ -299,9 +312,13 @@ class BiliReader:
     hosts = HOSTS
 
     def __init__(self, login: dict | None = None, see: See | None = None, *, frames: int = 9, max_looks: int = 2,
-                 subtitle_limit: int = 2500, subtitle_tries: int = 5, retry_pause: float = 0.6) -> None:
+                 subtitle_limit: int = 2500, subtitle_tries: int = 5, retry_pause: float = 0.6,
+                 hear: Hear | None = None, max_listens: int = 2, listen_seconds: float = 480) -> None:
         self.login = dict(login or {})
         self.see = see
+        self.hear, self.max_listens, self.listen_seconds = hear, max_listens, listen_seconds
+        self.listens = 0  # videos listened to in this outing (decoding and recognising take a while)
+        self.listen_failures = 0
         self.frames, self.max_looks, self.subtitle_limit = frames, max_looks, subtitle_limit
         self.subtitle_tries, self.retry_pause = max(1, subtitle_tries), retry_pause
         self.looks = 0  # videos looked at with the vision model in this outing (it is slow)
@@ -352,6 +369,14 @@ class BiliReader:
                 said = await self.subtitles(f, bvid, aid, cid)
             except Exception as exc:  # noqa: BLE001 - she can still look
                 log.warning("subtitles of %s: %s", bvid, exc)
+        heard = ""
+        if not said and self.hear and cid and self.listens < self.max_listens:
+            self.listens += 1
+            try:
+                heard = await self.listen(f, bvid, cid)
+            except Exception as exc:  # noqa: BLE001 - she can still look
+                self.listen_failures += 1
+                log.warning("listening to %s: %s", bvid, exc)
         looked = ""
         if not said and self.see and cid and self.looks < self.max_looks:
             self.looks += 1
@@ -363,9 +388,12 @@ class BiliReader:
         if said:
             parts.append("视频里说的（自动识别的字幕，可能有错字）：\n" + said)
             item.meta["read"] = "subtitles"
-        elif looked:
-            parts.append(f"这个视频没有字幕，你按时间看了里面的一些画面：{looked}")
-            item.meta["read"] = "frames"
+        elif heard or looked:
+            if heard:
+                parts.append("这个视频没有字幕，你听了里面的声音（本机听写的，可能有错字，[分:秒] 是时间）：\n" + heard)
+            if looked:
+                parts.append(f"{'' if heard else '这个视频没有字幕，'}你按时间看了里面的一些画面：{looked}")
+            item.meta["read"] = "+".join(k for k, v in (("heard", heard), ("frames", looked)) if v)
         else:
             item.meta["read"] = "title"
             item.meta["note"] = "没读到这个视频的字幕，画面也没看成，只看到了标题" + ("和简介" if desc else "")
@@ -397,6 +425,25 @@ class BiliReader:
         url = _https(chosen.get("subtitle_url") or chosen.get("subtitle_url_v2") or "")
         raw, _ = await f.get_bytes(url, headers=REFERER)  # no login here: the file is public
         return subtitle_text(json.loads(raw.decode("utf-8", errors="replace")), self.subtitle_limit)
+
+    async def listen(self, f: SafeFetcher, bvid: str, cid) -> str:
+        """The video's audio (the smallest stream, only its first minutes), heard by the local model. Asked for
+        the way the web player asks; no login."""
+        play = await self._api(f, "/x/player/playurl", {"bvid": bvid, "cid": cid, "fnval": 16, "qn": 16})
+        audios = [a for a in (play.get("dash") or {}).get("audio") or [] if a.get("bandwidth")]
+        if not audios:
+            return ""
+        audio = min(audios, key=lambda a: a["bandwidth"])
+        urls = [audio.get("baseUrl") or audio.get("base_url") or ""] + list(audio.get("backupUrl") or audio.get("backup_url") or [])
+        url = next((u for u in urls if u and host_allowed(u, set(self.hosts))), "")
+        if not url:
+            log.info("no allowed host for the audio of %s: %s", bvid, sorted({urlsplit(u).hostname for u in urls if u}))
+            return ""
+        want = int(audio["bandwidth"] / 8 * self.listen_seconds * 1.1) + 65536
+        want = min(want, 12_000_000)
+        raw, _ = await f.get_bytes(url, headers={**REFERER, "Range": f"bytes=0-{want - 1}"}, max_bytes=want + 65536,
+                                   timeout=60)
+        return await self.hear(raw)
 
     async def look(self, f: SafeFetcher, bvid: str, cid, title: str) -> str:
         """A few frames (multi-part videos: the preview covers part 1), described by the vision model."""

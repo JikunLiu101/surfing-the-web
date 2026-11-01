@@ -109,6 +109,7 @@ class Panel:
             "sources": [s.key for s in p._sources()],
             "searches": [s.site for s in p._searches()],
             "can": {"bili": p._bili_state(), "web": bool(p._deepseek_key()), "frames": p._viewer() is not None,
+                    "listen": p._listener() is not None if hasattr(p, "_listener") else False,
                     "chat_model": bool(p._provider_id())},
             "troubles": p._trouble_texts(p._owner_title()),
             "going": bool(self.going and not self.going.done()),

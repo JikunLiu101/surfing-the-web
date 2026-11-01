@@ -56,7 +56,8 @@ def test_routes_and_overview(tmp_path):
     assert out["status"] == "ok"
     d = out["data"]
     assert [x["done"] for x in d["plan"]] == [True, False] and d["recent"][0]["thought"] == "可爱"
-    assert d["can"] == {"bili": "none", "web": False, "frames": False, "chat_model": False} and not d["going"]
+    assert d["can"] == {"bili": "none", "web": False, "frames": False, "listen": False, "chat_model": False}
+    assert not d["going"]
 
 
 def test_wishes_are_checked_and_saved(tmp_path):

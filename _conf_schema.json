@@ -143,6 +143,28 @@
     "default": 2,
     "hint": "A local vision model is slow; the others keep their title and description."
   },
+  "listen_videos": {
+    "description": "Listen to videos without subtitles",
+    "type": "bool",
+    "default": true,
+    "hint": "Their audio (the smallest stream, its first minutes) is heard by a local speech model (SenseVoice, sherpa-onnx): speech, music, laughter. Needs the av and sherpa-onnx packages and the model in listen_model_dir."
+  },
+  "listen_videos_per_outing": {
+    "description": "Videos listened to per outing",
+    "type": "int",
+    "default": 2
+  },
+  "listen_minutes": {
+    "description": "Minutes of a video listened to",
+    "type": "int",
+    "default": 8
+  },
+  "listen_model_dir": {
+    "description": "Speech model folder",
+    "type": "string",
+    "default": "",
+    "hint": "model.int8.onnx and tokens.txt of sherpa-onnx's SenseVoice. Empty: data/plugin_data/astrbot_plugin_surfing_the_web/models/sense-voice"
+  },
   "blocked_keywords": {
     "description": "Blocked words",
     "type": "list",

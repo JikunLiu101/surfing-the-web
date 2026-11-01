@@ -42,7 +42,8 @@
     clear($("can"), el("table", {},
       el("tr", {}, el("td", {}, "B站视频的字幕"), el("td", {}, badge(biliText, biliCls))),
       el("tr", {}, el("td", {}, "网页搜索和网页正文"), el("td", {}, d.can.web ? badge("可以（DeepSeek）", "good") : badge("没有 DeepSeek key", "bad"))),
-      el("tr", {}, el("td", {}, "没字幕时看视频画面"), el("td", {}, d.can.frames ? badge("可以", "good") : badge("没有能看图的模型", "warn")))));
+      el("tr", {}, el("td", {}, "没字幕时看视频画面"), el("td", {}, d.can.frames ? badge("可以", "good") : badge("没有能看图的模型", "warn"))),
+      el("tr", {}, el("td", {}, "没字幕时听视频声音"), el("td", {}, d.can.listen ? badge("可以（本机 SenseVoice）", "good") : badge("没准备好", "warn")))));
 
     renderWishes(d.wishes);
 

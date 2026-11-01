@@ -37,7 +37,11 @@
 
 列表上往往只有一个标题。点开一条会去读它的内容：
 
-* **B 站视频**：读字幕（优先 AI 中文字幕；只有"字幕 by 某某"这种署名的，说明视频里没人说话）。B 站只给登录的账号看字幕：在本机网页对话里发 `/surf_bili_login`，用手机 B 站扫码确认（建议用小号，只用来读字幕）。没有字幕时，从 B 站进度条预览图里截 3 个画面（不下载视频），拼成一张交给能看图的模型描述（`vision_provider_id`，默认用第一个支持图片的模型；每次出门最多看 `frames_videos_per_outing` 个视频，本地模型比较慢）。两样都拿不到时会如实告诉她，不会让她以为是空页面。
+* **B 站视频**：读字幕（优先 AI 中文字幕；只有"字幕 by 某某"这种署名的，说明视频里没人说话）。B 站只给登录的账号看字幕：在本机网页对话里发 `/surf_bili_login`，用手机 B 站扫码确认（建议用小号，只用来读字幕）。B 站常把别的视频的 AI 字幕给过来，只用文件名对得上这个视频（以它的 aid + cid 开头）的，对不上就再问，最多 5 次。没有字幕时：
+  * **听**：下载视频的音频（最小的那档，只要前 `listen_minutes` 分钟，约每分钟 0.5 MB），在本机用 PyAV 解码、用 SenseVoice（[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)）听写成文字，还会听出背景音乐、笑声、掌声；每次出门最多听 `listen_videos_per_outing` 个。几分钟的视频几秒就听完。要装 `av`、`sherpa-onnx`，并把模型（[sherpa-onnx 版 SenseVoice](https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17) 的 `model.int8.onnx` 和 `tokens.txt`，约 240 MB）放进 `data/plugin_data/astrbot_plugin_surfing_the_web/models/sense-voice/`（或 `listen_model_dir`）；没装就不听。
+  * **看**：从 B 站进度条预览图里截 9 个画面（不下载视频）：首尾各留一小段（时长的 5%，3 到 15 秒），从开头那段结束截到结尾那段开始，中间平均分 8 份；拼成 3×3 的格子、每格标上时间，交给能看图的模型按时间讲发生了什么、抄下画面上的字（`vision_provider_id`，默认用第一个支持图片的模型；每次出门最多看 `frames_videos_per_outing` 个视频）。
+
+什么都拿不到时会如实告诉她，不会让她以为是空页面。记进记忆的是她写感想时顺带写的一句话概括，不是内容的开头。
 * **网页搜索结果，以及列表上没什么内容的条目**（Hacker News、GitHub……）：通过 [DeepSeek 的 Fetch 接口](https://api-docs.deepseek.com/guides/search/) 读正文。网页由 DeepSeek 去下载，本机不会访问那个网站。Search 和 Fetch 用 AstrBot 里 DeepSeek 服务商的 key（或者 `deepseek_api_key`），每 1000 次成功调用各 0.75 美元，失败和没结果的不收费。
 
 `/surf_bili_status` 查看登录是否还有效、哪些内容读得了；`/surf_bili_logout` 删除登录。
@@ -87,7 +91,7 @@
 
 把本仓库复制到 AstrBot 的 `data/plugins/astrbot_plugin_surfing_the_web/`（或用仓库地址安装），重启 AstrBot，在本机网页对话里发 `/surf` 试一次（`/surf 话题` 会顺便去搜）。`/surf_log` 查看今天的计划、想找的东西和最近看过的内容。
 
-依赖：`httpx`、`beautifulsoup4`（AstrBot 都已自带）。
+依赖：`httpx`、`beautifulsoup4`（AstrBot 都已自带）。听视频（可选）：`pip install av sherpa-onnx`，再放好上面说的模型。
 
 ## 开发
 
@@ -116,6 +120,7 @@ AstrBot 4.24.2 起，后台「插件 → 上网逛逛 → 视图 → 上网」�
 [astrbot_plugin_proactive_chat](https://github.com/DBJD-CR/astrbot_plugin_proactive_chat)（随机时间、安静时段、用户活跃时等待；只借鉴思路，没有复制代码）和 Letta 的
 [sleep-time agents](https://letta.com/blog/sleep-time-compute)（角色自己的活动和聊天分开进行）。
 读视频的做法参考了 [dsh-bili-scroll](https://github.com/c1overzz/dsh-bili-scroll) 和 [bilibili-mcp](https://github.com/adoresever/bilibili-mcp)（都是 MIT）：先读字幕，没有字幕就从预览图里截画面。
+听视频用 [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)（FunASR 模型许可）和 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（Apache-2.0）转换好的模型，解码用 [PyAV](https://github.com/PyAV-Org/PyAV)。
 
 ## 许可证
 

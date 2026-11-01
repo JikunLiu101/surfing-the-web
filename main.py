@@ -50,6 +50,7 @@ class SurfingTheWeb(star.Star):
         self.state_path = self.data_dir / "state.json"
         self.state = State.load(self.state_path)
         self.notes = NoteMemo()
+        self.listener = None  # the local speech model, loaded on first use
         self.login_path = self.data_dir / "bilibili_login.json"  # her Bilibili account (never logged, not in git)
         self._warned: set[str] = set()
         self.rng = random.Random()
@@ -199,7 +200,11 @@ class SurfingTheWeb(star.Star):
             if bili == "ok":
                 reads.append("B站视频能读字幕（里面说了什么）")
             if self._viewer() is not None:
-                reads.append("B站视频没字幕时能看里面几个画面")
+                reads.append("B站视频没字幕时能按时间看里面的画面")
+            if self._listener() is not None:
+                reads.append("B站视频没字幕时能听里面的声音（说的话，还有音乐、笑声）")
+            elif self.cfg.get("listen_videos", True):
+                fixes.append(f"听视频要本机的语音识别模型，现在没准备好；要{owner}看看上网逛逛的插件日志")
             if bili == "none":
                 fixes.append(f"读B站字幕要{owner}在电脑的网页对话里发 /surf_bili_login，用手机B站扫码给你登一个账号，"
                              "现在还没登")
@@ -212,6 +217,11 @@ class SurfingTheWeb(star.Star):
         if bili == "ok":
             out.append(("surfing-the-web:subtitles", "看B站视频里说了什么",
                         f"点开B站视频能读到里面说的话（字幕），用的是{owner}给你登的B站账号；登录大约半年后会过期"))
+        if bili != "off" and self._listener() is not None:
+            out.append(("surfing-the-web:listen", "听B站视频里的声音",
+                        "B站视频没字幕时，你能听里面的声音：说的话（本机听写，可能有错字），还有背景音乐、笑声、掌声；"
+                        f"每次出门最多听 {int(self.cfg.get('listen_videos_per_outing', 2))} 个，"
+                        f"每个听前 {int(self.cfg.get('listen_minutes', 8))} 分钟"))
         return out
 
     def _bili_state(self) -> str:
@@ -358,13 +368,32 @@ class SurfingTheWeb(star.Star):
 
         return see
 
+    def _listener(self):
+        """The local speech model that hears videos without subtitles, or None (switched off or not ready)."""
+        if not self.cfg.get("listen_videos", True):
+            return None
+        if self.listener is None:
+            from .listen import Listener  # noqa: PLC0415
+
+            where = str(self.cfg.get("listen_model_dir") or "").strip() or str(self.data_dir / "models" / "sense-voice")
+            self.listener = Listener(where, max_seconds=60 * max(1, int(self.cfg.get("listen_minutes", 8))))
+        ok, why = self.listener.ready()
+        if not ok:
+            self._warn_once("listen", f"[surfing] cannot hear videos: {why}")
+            return None
+        return self.listener
+
     def _reader(self) -> Reader:
         key = self._deepseek_key()
         pages = PageReader(key) if key and self.cfg.get("read_pages", True) else None
         bili = None
         if self.cfg.get("read_videos", True):
+            listener = self._listener()
+            hear = (lambda audio: asyncio.to_thread(listener.hear, audio)) if listener else None
             bili = BiliReader(load_login(self.login_path), self._viewer(),
-                              max_looks=int(self.cfg.get("frames_videos_per_outing", 2)))
+                              max_looks=int(self.cfg.get("frames_videos_per_outing", 2)), hear=hear,
+                              max_listens=int(self.cfg.get("listen_videos_per_outing", 2)),
+                              listen_seconds=60 * max(1, int(self.cfg.get("listen_minutes", 8))))
         return Reader(bili, pages)
 
     async def _roll_day(self, now: datetime) -> None:
