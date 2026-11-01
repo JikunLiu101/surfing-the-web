@@ -43,7 +43,8 @@ REACT_SYSTEM = """{persona}
 
 对每一条，用你自己的口吻写一两句当时心里的想法（像自言自语，不是写给谁看的）。
 只根据看到的内容说，没写到的不要编；看不懂、没意思也可以直说。想到谁就写谁，但不用每条都扯到别人身上。
-只输出 JSON：{{"thoughts": [{{"n": 编号, "text": "想法"}}, ...]}}"""
+再用一句话客观地记下这条讲了什么（gist：50 字以内，不带你的感受，像记笔记；只看到标题就写“只看到了标题”）。
+只输出 JSON：{{"thoughts": [{{"n": 编号, "text": "想法", "gist": "讲了什么"}}, ...]}}"""
 
 
 # ------------------------------------------------------------------ prompts in and out
@@ -118,12 +119,34 @@ def parse_thoughts(text: str, n_items: int, limit: int = 200) -> dict[int, str]:
     return out
 
 
+def parse_gists(text: str, n_items: int, limit: int = 80) -> dict[int, str]:
+    """0-based index -> what the item was about, in one sentence (from the same answer as the thoughts)."""
+    raw = _json_object(text).get("thoughts")
+    out: dict[int, str] = {}
+    for t in raw if isinstance(raw, list) else []:
+        if not isinstance(t, dict):
+            continue
+        try:
+            i = int(t.get("n")) - 1
+        except (TypeError, ValueError):
+            continue
+        gist = clip(str(t.get("gist") or "").strip().strip("“”\""), limit)
+        if 0 <= i < n_items and gist:
+            out[i] = gist
+    return out
+
+
 def observation_text(it: Item) -> str:
-    """What is remembered of what she saw: short, the page itself is not kept."""
+    """What is remembered of what she saw: short, the page itself is not kept. With a gist (what it was about,
+    in one sentence), that is kept instead of the start of the page: the start of a long video's subtitles says
+    little about it."""
     text = f"在{it.site}看到《{it.title}》"
     if it.summary:
         text += f"（{it.summary}）"
-    if it.body:
+    gist = str(it.meta.get("gist") or "").strip()
+    if gist:
+        text += "：" + gist
+    elif it.body:
         text += "：" + clip(it.body, 300)
     return text
 
@@ -287,10 +310,13 @@ async def go_out(sources: list[Source], complete: Complete, sink: Sink, *, perso
 
         chosen = list(await asyncio.gather(*(open_one(items[i]) for i in picks)))  # videos take a while
 
-    thoughts = parse_thoughts(await complete(REACT_SYSTEM.format(persona=persona), reading(chosen)), len(chosen))
+    answer = await complete(REACT_SYSTEM.format(persona=persona), reading(chosen))
+    thoughts, gists = parse_thoughts(answer, len(chosen)), parse_gists(answer, len(chosen))
     for i, it in enumerate(chosen):
         when = now + timedelta(minutes=2 * i)
         thought = thoughts.get(i, "")
+        if gists.get(i):
+            it.meta["gist"] = gists[i]
         sink.record(it, thought, when)
         already_seen.add(item_key(it))
         outing.seen.append(Seen(when.isoformat(), it.site, it.title, it.url, thought))

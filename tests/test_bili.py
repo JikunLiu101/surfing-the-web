@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from surfing_the_web.bili import (BiliReader, choose_subtitle, load_login, login_from_url, pick_tiles, pvdata_times,
+from surfing_the_web.bili import (BiliReader, choose_subtitle, clock_label, subtitle_belongs, load_login, login_from_url, pick_tiles, pvdata_times,
                                   save_login, subtitle_text)
 from surfing_the_web.sources import Item, SafeFetcher
 
@@ -33,9 +33,10 @@ class Bili:
     """A fake Bilibili: what is asked, and what it answers."""
 
     def __init__(self, *, subtitles=True, player_bvid="BV1xx", logged_in=True,
-                 sub_lines=("大家好", "今天讲一讲冻河这个干员的技能")):
+                 sub_lines=("大家好", "今天讲一讲冻河这个干员的技能"), wrong_first=0):
         self.asked = []
         self.subtitles, self.player_bvid, self.logged_in, self.sub_lines = subtitles, player_bvid, logged_in, sub_lines
+        self.wrong_first = wrong_first  # this many player answers list another video's AI subtitles
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         self.asked.append(req)
@@ -48,6 +49,10 @@ class Bili:
         if path == "/x/player/v2":
             subs = [{"lan": "en", "subtitle_url": "//aisubtitle.hdslb.com/en.json"},
                     {"lan": "ai-zh", "subtitle_url": "//aisubtitle.hdslb.com/zh.json"}] if self.subtitles else []
+            if self.wrong_first > 0:
+                self.wrong_first -= 1
+                subs = [{"lan": "ai-zh", "subtitle_url": "//aisubtitle.hdslb.com/bfs/ai_subtitle/prod/"
+                                                          "113382841652540264981724155805fa9?auth_key=x"}]
             return httpx.Response(200, json={"code": 0, "data": {
                 "bvid": self.player_bvid, "cid": 8, "login_mid": 42 if self.logged_in else 0,
                 "subtitle": {"subtitles": subs}}})
@@ -110,15 +115,16 @@ def test_without_subtitles_she_looks_at_frames():
         from PIL import Image
 
         img = Image.open(io.BytesIO(jpeg))
-        seen.append((img.size, prompt, img.getpixel((10, 10))))
+        seen.append((img.size, prompt, img.getpixel((200, 150))))  # away from the time label in the corner
         return "一个人  在雪地里\n放技能"
 
     bili = Bili(subtitles=False)
     _, it = read(bili, see=see)
     assert it.meta["read"] == "frames"
-    assert it.body == "简介：六星辅助\n这个视频没有字幕，你看了里面几个画面：一个人 在雪地里 放技能"
+    assert it.body == "简介：六星辅助\n这个视频没有字幕，你按时间看了里面的一些画面：一个人 在雪地里 放技能"
     (size, prompt, first), = seen
-    assert size == (3 * 480 + 16, 270) and "《冻河 技能演示》" in prompt and "3 个画面" in prompt
+    # the fake sheet has 4 tiles: all 4, in rows of 3, each 480 wide (270 high), with their times in the corner
+    assert size == (3 * 480 + 2 * 6, 2 * 270 + 6) and "《冻河 技能演示》" in prompt and "4 个画面" in prompt
     assert first[0] > 200 and first[1] < 60  # tile 0 (red) first: frames are in time order
     shot = next(r for r in bili.asked if r.url.path == "/x/player/videoshot")
     assert "SESSDATA" not in shot.headers.get("cookie", "")
@@ -216,3 +222,32 @@ def test_videos_opened_together_share_one_device_id():
     assert sum(1 for r in bili.asked if r.url.path == "/x/frontend/finger/spi") == 1
     views = [r for r in bili.asked if r.url.path == "/x/web-interface/view"]
     assert len(views) == 2 and all("buvid3=dev3" in r.headers.get("cookie", "") for r in views)
+
+
+def test_subtitle_ownership():
+    mine = {"subtitle_url": "//aisubtitle.hdslb.com/bfs/ai_subtitle/prod/117517435600920431205934698cc7ec?auth_key=1"}
+    other = {"subtitle_url": "//aisubtitle.hdslb.com/bfs/ai_subtitle/prod/11338284165254026498172415?auth_key=1"}
+    translated = {"subtitle_url": "//aisubtitle.hdslb.com/bfs/ai_subtitle/prod/0b7ba54feaf8961acf51bd584fedef2e"}
+    uploaded = {"subtitle_url": "//i0.hdslb.com/bfs/subtitle/abc123.json"}
+    aid, cid = 117517435600920, 43120593469
+    assert subtitle_belongs(mine, aid, cid) and not subtitle_belongs(other, aid, cid)
+    assert subtitle_belongs(translated, aid, cid) and subtitle_belongs(uploaded, aid, cid)
+
+
+def test_another_videos_ai_subtitles_are_skipped_and_asked_again():
+    bili = Bili(wrong_first=2)
+    _, it = read(bili, retry_pause=0)
+    assert it.meta["read"] == "subtitles" and "冻河" in it.body
+    assert sum(1 for r in bili.asked if r.url.path == "/x/player/v2") == 3
+    assert not any("ai_subtitle" in r.url.path for r in bili.asked)  # the wrong file is never read
+
+
+def test_only_other_videos_subtitles_means_none():
+    bili = Bili(wrong_first=9)
+    _, it = read(bili, retry_pause=0)
+    assert it.meta["read"] == "title"  # no vision model here: only the title and the description
+    assert sum(1 for r in bili.asked if r.url.path == "/x/player/v2") == 5  # asked at most five times
+
+
+def test_clock_label():
+    assert clock_label(0) == "0秒" and clock_label(75) == "1分15秒" and clock_label(75000.0) == "1分15秒"

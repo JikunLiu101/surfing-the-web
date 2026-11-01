@@ -18,6 +18,7 @@ from surfing_the_web.wander import (
     menu,
     observation_text,
     parse_picks,
+    parse_gists,
     parse_thoughts,
     plan_day,
     recent_block,
@@ -167,3 +168,13 @@ def test_strip_blocks_keeps_history_stable():
     assert history[0]["content"] == [{"type": "text", "text": "hi"}]
     assert history[2]["content"] == "again" and len(history[3]["content"]) == 1
     assert strip_blocks(history, ("surfing_the_web",)) == 0
+
+
+def test_gist_is_remembered_instead_of_the_start_of_the_page():
+    answer = '{"thoughts": [{"n": 1, "text": "好玩", "gist": "UP主讲匹克球怎么计分：一局先到 11 分"}, {"n": 2, "text": "嗯"}]}'
+    assert parse_gists(answer, 2) == {0: "UP主讲匹克球怎么计分：一局先到 11 分"}
+    it = Item(source="bilibili_search", site="B站", title="匹克球规则", url="u", body="字幕开头" * 100)
+    without = observation_text(it)  # without a gist: the start of the page, clipped
+    assert without.startswith("在B站看到《匹克球规则》：字幕开头字幕开头") and len(without) < 330
+    it.meta["gist"] = "UP主讲匹克球怎么计分：一局先到 11 分"
+    assert observation_text(it) == "在B站看到《匹克球规则》：UP主讲匹克球怎么计分：一局先到 11 分"

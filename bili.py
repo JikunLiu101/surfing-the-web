@@ -39,9 +39,10 @@ QR_DONE, QR_WAITING, QR_SCANNED, QR_EXPIRED = 0, 86101, 86090, 86038
 
 See = Callable[[bytes, str], Awaitable[str]]  # (jpeg, prompt) -> what the vision model saw
 
-LOOK_PROMPT = ("这张图是B站视频《{title}》里按时间顺序截下来的 {n} 个画面，从左到右拼在一起。"
-               "请客观描述画面里有什么：场景、人物或东西、在做什么、画面上能看清的字。"
-               "只说看得到的，不猜测，不评价。用中文，150 字以内。")
+LOOK_PROMPT = ("这张图是B站视频《{title}》里按时间顺序截下来的 {n} 个画面，拼成格子：从左到右、从上到下，"
+               "每格左上角标着它在视频里的时间（如 1m15s 是第 1 分 15 秒）。请按时间顺序讲这段视频里发生了什么：场景、人物或东西、在做什么、"
+               "前后有什么变化；画面上能看清的字（标题、字幕、弹窗、屏幕上的字）照原文写出来，这个最重要。"
+               "只说看得到的，不猜测，不评价。用中文，300 字以内。")
 
 
 # ------------------------------------------------------------------ login
@@ -145,6 +146,18 @@ async def whoami(f: SafeFetcher, login: dict) -> str:
 # ------------------------------------------------------------------ subtitles
 
 
+def subtitle_belongs(sub: dict, aid, cid) -> bool:
+    """Whether a subtitle file is this video's. Bilibili's player API often lists the AI subtitles of some other
+    video (tested 2026-11-01: 12 of 15 answers; asking again usually helps). An AI subtitle file of a video is named after it, "<aid><cid>…";
+    a name that starts with a long run of digits that is not this aid+cid is another video's. Other names
+    (uploaded subtitles, translated ones) are kept."""
+    url = str(sub.get("subtitle_url") or sub.get("subtitle_url_v2") or "")
+    name = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+    if not re.match(r"\d{15}", name):
+        return True
+    return bool(aid) and bool(cid) and name.startswith(f"{aid}{cid}")
+
+
 def choose_subtitle(subtitles: list[dict]) -> dict | None:
     """AI Chinese subtitles first, then any Chinese, then the first one with a file."""
     usable = [s for s in subtitles or [] if s.get("subtitle_url") or s.get("subtitle_url_v2")]
@@ -214,6 +227,50 @@ def crop_tile(sheet: bytes, index: int, cols: int, rows: int):
     return img.crop((col * tw, row * th, (col + 1) * tw, (row + 1) * th)).convert("RGB")
 
 
+def clock_label(t: float) -> str:
+    """A tile time in words the vision model reads right ("1分15秒"; "0:25" was read as 0.25 seconds). Times
+    past ten hours are taken as milliseconds."""
+    seconds = int(t / 1000 if t > 36000 else t)
+    return f"{seconds // 60}分{seconds % 60:02d}秒" if seconds >= 60 else f"{seconds}秒"
+
+
+def _label_font(size: int = 26):
+    from PIL import ImageFont  # noqa: PLC0415
+
+    try:
+        return ImageFont.load_default(size=size)  # Pillow 10.1+: a scalable font, no file needed
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def grid(frames: list, labels: list[str] = (), cols: int = 3, width: int = 480) -> bytes:
+    """Frames in rows of `cols`, each `width` wide, with its time in the corner, as one JPEG (one picture for the
+    vision model: it sees the order and the time of each)."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    if not frames:
+        return b""
+    cols = max(1, min(cols, len(frames)))
+    scaled = [fr.resize((width, max(1, round(fr.height * width / fr.width)))) for fr in frames]
+    h = max(fr.height for fr in scaled)
+    rows = -(-len(scaled) // cols)
+    gap = 6
+    out = Image.new("RGB", (cols * width + gap * (cols - 1), rows * h + gap * (rows - 1)), "white")
+    draw = ImageDraw.Draw(out)
+    font = _label_font()
+    for i, fr in enumerate(scaled):
+        x, y = (i % cols) * (width + gap), (i // cols) * (h + gap)
+        out.paste(fr, (x, y))
+        if i < len(labels) and labels[i]:
+            text = labels[i].replace("分", "m").replace("秒", "s")  # the built-in font has no CJK glyphs
+            box = draw.textbbox((0, 0), text, font=font)
+            draw.rectangle((x, y, x + box[2] + 12, y + box[3] + 10), fill="black")
+            draw.text((x + 6, y + 4), text, fill="white", font=font)
+    buf = io.BytesIO()
+    out.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
 def stitch(frames: list, height: int = 270) -> bytes:
     """Frames side by side, same height, as one JPEG (one picture for the vision model, not several)."""
     from PIL import Image  # noqa: PLC0415
@@ -241,11 +298,12 @@ class BiliReader:
 
     hosts = HOSTS
 
-    def __init__(self, login: dict | None = None, see: See | None = None, *, frames: int = 3, max_looks: int = 2,
-                 subtitle_limit: int = 2500) -> None:
+    def __init__(self, login: dict | None = None, see: See | None = None, *, frames: int = 9, max_looks: int = 2,
+                 subtitle_limit: int = 2500, subtitle_tries: int = 5, retry_pause: float = 0.6) -> None:
         self.login = dict(login or {})
         self.see = see
         self.frames, self.max_looks, self.subtitle_limit = frames, max_looks, subtitle_limit
+        self.subtitle_tries, self.retry_pause = max(1, subtitle_tries), retry_pause
         self.looks = 0  # videos looked at with the vision model in this outing (it is slow)
         self.vision_failures = 0  # of those, how many the vision model did not answer
         self.login_expired = False
@@ -306,7 +364,7 @@ class BiliReader:
             parts.append("视频里说的（自动识别的字幕，可能有错字）：\n" + said)
             item.meta["read"] = "subtitles"
         elif looked:
-            parts.append(f"这个视频没有字幕，你看了里面几个画面：{looked}")
+            parts.append(f"这个视频没有字幕，你按时间看了里面的一些画面：{looked}")
             item.meta["read"] = "frames"
         else:
             item.meta["read"] = "title"
@@ -315,14 +373,25 @@ class BiliReader:
         return item
 
     async def subtitles(self, f: SafeFetcher, bvid: str, aid, cid) -> str:
-        data = await self._api(f, "/x/player/v2", {"aid": aid, "cid": cid}, logged_in=True)
-        if "login_mid" in data and not data.get("login_mid"):
-            self.login_expired = True  # the saved login no longer works
-            return ""
-        if str(data.get("bvid") or bvid) != bvid or str(data.get("cid") or cid) != str(cid):
-            log.warning("bilibili answered with another video's player info for %s", bvid)
-            return ""
-        chosen = choose_subtitle((data.get("subtitle") or {}).get("subtitles") or [])
+        """This video's subtitles as text. The player API often lists another video's AI subtitles (or none, on a
+        bad try): those are left out and it is asked again, a few times; "" when none of this video turns up."""
+        chosen = None
+        for attempt in range(self.subtitle_tries):
+            if attempt:
+                await asyncio.sleep(self.retry_pause)
+            data = await self._api(f, "/x/player/v2", {"aid": aid, "cid": cid}, logged_in=True)
+            if "login_mid" in data and not data.get("login_mid"):
+                self.login_expired = True  # the saved login no longer works
+                return ""
+            if str(data.get("bvid") or bvid) != bvid or str(data.get("cid") or cid) != str(cid):
+                log.warning("bilibili answered with another video's player info for %s", bvid)
+                continue
+            listed = (data.get("subtitle") or {}).get("subtitles") or []
+            chosen = choose_subtitle([s for s in listed if subtitle_belongs(s, aid, cid)])
+            if chosen:
+                break
+            if listed:
+                log.info("bilibili listed another video's subtitles for %s (try %d), asking again", bvid, attempt + 1)
         if not chosen:
             return ""
         url = _https(chosen.get("subtitle_url") or chosen.get("subtitle_url_v2") or "")
@@ -345,17 +414,18 @@ class BiliReader:
         per = cols * rows
         tiles = pick_tiles(times, len(sheets) * per, self.frames)
         got: dict[int, bytes] = {}
-        frames = []
+        frames, labels = [], []
         for t in tiles:
             k = t // per
             if k not in got:
                 got[k] = (await f.get_bytes(sheets[k], headers=REFERER, max_bytes=8_000_000))[0]
             frames.append(crop_tile(got[k], t % per, cols, rows))
+            labels.append(clock_label(times[t]) if t < len(times) else "")
         if not frames:
             return ""
         try:
-            seen = await self.see(stitch(frames), LOOK_PROMPT.format(title=title, n=len(frames)))
+            seen = await self.see(grid(frames, labels), LOOK_PROMPT.format(title=title, n=len(frames)))
         except Exception:
             self.vision_failures += 1
             raise
-        return clip(re.sub(r"\s+", " ", seen or "").strip(), 400)
+        return clip(re.sub(r"\s+", " ", seen or "").strip(), 700)

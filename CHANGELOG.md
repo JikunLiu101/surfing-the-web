@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.1 (2026-11-01)
+
+- Fix: Bilibili's player API often lists **another video's AI subtitles** (tested: 12 of 15 answers), so she read
+  and remembered things that were never in the video. A video's own AI subtitle file is named after its aid and
+  cid; files named after another video are left out and the API is asked again (up to five times,
+  `subtitle_belongs`); when none of the video's own turn up, she looks at frames instead.
+- Without subtitles she looks at 9 frames (was 3), in a 3x3 grid with each frame's time in the corner, and the vision
+  model is asked what happens over time and to copy the text on screen (up to 700 characters, was 400). The
+  preview images Bilibili makes cover about the first two and a half minutes of a long video.
+- What is remembered of something she saw is a one-sentence gist of it (written with her thought), not the start of
+  the page: the start of a long video's subtitles said little about it.
+
 ## 0.6.0 (2026-11-01)
 
 - A dashboard (plugin view `surfing`, AstrBot 4.24.2+): today's outings and what is left, what she saw and
