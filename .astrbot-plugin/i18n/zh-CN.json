@@ -130,5 +130,11 @@
       "description": "聊天模型提供商 ID",
       "hint": "留空：AstrBot 当前用的那个。"
     }
+  },
+  "pages": {
+    "surfing": {
+      "title": "上网",
+      "description": "今天的出门、看到的和她的想法、想找的、B站登录"
+    }
   }
 }

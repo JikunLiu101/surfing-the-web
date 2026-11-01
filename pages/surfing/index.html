@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>上网逛逛</title>
+  <link rel="stylesheet" href="kit.css">
+  <script src="/api/plugin/page/bridge-sdk.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header class="head">
+      <div>
+        <h1>上网逛逛</h1>
+        <div class="sub">她自己上网看到了什么、想找什么、今天还能出门几次</div>
+      </div>
+      <button id="refresh" class="ghost">刷新</button>
+    </header>
+
+    <div id="error" class="error" hidden></div>
+    <div id="notes"></div>
+    <div id="cards" class="cards"></div>
+
+    <div class="panel">
+      <h2>现在让她出门一次</h2>
+      <form id="go-form" class="form">
+        <input id="go-topic" type="text" maxlength="30" placeholder="顺便去搜什么（可以不填）" autocomplete="off">
+        <button id="go" type="submit">出门</button>
+      </form>
+      <div id="go-result" class="small" style="margin-top:10px"></div>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h2>今天的出门计划</h2>
+        <div id="plan"></div>
+      </div>
+      <div class="panel">
+        <h2>她能读到什么</h2>
+        <div id="can"></div>
+        <div class="row" style="margin-top:10px">
+          <button id="bili-qr" class="small">扫码登 B站</button>
+          <button id="bili-check" class="small ghost">检查登录</button>
+          <button id="bili-logout" class="small ghost">退出登录</button>
+        </div>
+        <div id="qr" class="qr" style="margin-top:10px" hidden>
+          <img id="qr-img" alt="B站登录二维码">
+          <div id="qr-text" class="small"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>想找的（下次出门先去搜）</h2>
+      <div id="wishes" class="chips"></div>
+      <form id="wish-form" class="form">
+        <input id="wish-topic" type="text" maxlength="30" placeholder="话题词，比如 明日方舟 新干员" autocomplete="off">
+        <input id="wish-reason" type="text" maxlength="100" placeholder="为什么想知道（可以不填）" autocomplete="off">
+        <button type="submit">加上</button>
+      </form>
+      <div class="small muted" style="margin-top:6px">只写公开的话题词（游戏、作品、新闻），不写任何人的名字、住址、号码。</div>
+    </div>
+
+    <div class="panel">
+      <h2>最近看到的</h2>
+      <div id="recent" class="list"></div>
+    </div>
+
+    <div class="panel">
+      <h2>最近几次出门</h2>
+      <div id="outings" class="table-scroll"></div>
+    </div>
+  </div>
+  <script src="kit.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

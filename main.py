@@ -56,6 +56,12 @@ class SurfingTheWeb(star.Star):
         self.owner_last_seen: datetime | None = None
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
+        try:
+            from .panel import Panel  # noqa: PLC0415
+
+            Panel(self).register()
+        except Exception as exc:  # noqa: BLE001 - the dashboard is optional
+            logger.warning(f"[surfing] dashboard not registered: {exc}")
 
     async def initialize(self) -> None:
         if self.cfg.get("enabled", True):

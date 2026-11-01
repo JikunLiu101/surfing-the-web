@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 (2026-11-01)
+
+- A dashboard (plugin view `surfing`, AstrBot 4.24.2+): today's outings and what is left, what she saw and
+  thought, the last outings and their errors, what she can read now; send her out now (with a topic), add and
+  remove wishes, log in to Bilibili by scanning a QR code on the page, check or remove the login. The login
+  itself never goes to the page.
+
 ## 0.5.0 (2026-11-01)
 
 - Market metadata: Chinese name 上网逛逛, `astrbot_version`, `support_platforms`, tags; an English
